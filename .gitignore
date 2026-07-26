@@ -1,0 +1,7 @@
+node_modules/
+*.streamDeckPlugin
+com.local.codexmicrodeck.sdPlugin/bin/
+com.local.codexmicrodeck.sdPlugin/logs/
+*.log
+.DS_Store
+work/

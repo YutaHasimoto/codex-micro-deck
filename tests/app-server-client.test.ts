@@ -1,0 +1,29 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import {
+  DEFAULT_CODEX_CLI_CANDIDATES,
+  resolveCodexCliPath
+} from "../src/codex/app-server-client.ts";
+
+test("Codex CLI resolution prefers the ChatGPT app bundle and requires an executable codex path", async () => {
+  assert.equal(
+    DEFAULT_CODEX_CLI_CANDIDATES[0],
+    "/Applications/ChatGPT.app/Contents/Resources/codex"
+  );
+  const checked: string[] = [];
+  const resolved = await resolveCodexCliPath(
+    ["/tmp/not-codex", "/Applications/ChatGPT.app/Contents/Resources/codex"],
+    async (candidate) => {
+      checked.push(candidate);
+      return true;
+    }
+  );
+
+  assert.equal(resolved, "/Applications/ChatGPT.app/Contents/Resources/codex");
+  assert.deepEqual(checked, ["/Applications/ChatGPT.app/Contents/Resources/codex"]);
+  await assert.rejects(
+    () => resolveCodexCliPath(["relative/codex"], async () => true),
+    /bundled CLI was not found/
+  );
+});

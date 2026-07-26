@@ -1,0 +1,245 @@
+# Codex Micro Deck
+
+Stream Deck + の8キー、4ダイヤル、4つのタッチ領域を、Codexデスクトップアプリの操作盤として使うmacOS向けプラグインです。
+
+[Codex Microの公式仕様](https://learn.chatgpt.com/docs/features/codex-micro)にある「6件のタスクを状態つきで追う」「承認・却下を手元で行う」という考え方に加え、CodexのModel、Reasoning、Speed、Accessを4つのダイヤルから設定できるよう、Stream Deck +の形に合わせて再配置しています。OpenAIまたはElgatoの公式製品ではなく、ローカル環境向けの独立実装です。
+
+v0.4.8では、4本の設定ダイヤルのどれを押してもCodexの音声入力を開始し、もう一度どれかを押すと文字起こしを完了してそのまま送信します。録音中は4つの200×100ピクセル画面を横断する同期波形へ切り替わり、Model、Reasoning、Speed、Accessの回転操作を停止します。設定変更は従来どおり、録音していないときに回転を止めて80ミリ秒後に自動適用します。詳しくは[v0.4.8リリースノート](docs/RELEASE-NOTES-v0.4.8-ja.md)を参照してください。
+
+## 既定レイアウト
+
+キーは上段左から右、次に下段左から右の順です。
+
+| 位置 | 割り当て | 操作 |
+|---|---|---|
+| 上段 1〜4 | Agent 1〜4 | 最近更新されたCodexタスクを開く |
+| 下段 1〜2 | Agent 5〜6 | 最近更新されたCodexタスクを開く |
+| 下段 3 | Approve | 応答できる承認要求がある間だけ点灯し、その要求を承認する |
+| 下段 4 | Decline | 応答できる承認要求がある間だけ点灯し、その要求を却下する |
+
+ハードウェア上では、Agentキーをロボットアイコン、1〜6の番号、1行のタスク名で区別します。右下の形つき状態アイコンも維持します。Approveはチェック、Declineはバツのアイコンです。
+
+Agentキーを1回押すと、そのタスクをバックグラウンドで選択します。350ミリ秒以内に2回押すと、Codexを前面に出して選択します。既定では直近6件を自動割り当てします。Stream Deckアプリでキーを選び、「最近のタスクを自動で割り当てる」をOFFにしてProperty Inspectorの「固定するタスクID」にIDを入れると固定割り当てもできます。自動割り当てをOFFにしたままタスクIDを空欄にすると、そのキーは意図的に未割り当てとなり、消灯状態を表示します。
+
+各ダイヤルと、その真上にある200×100ピクセルのタッチ領域は1組のEncoderとして動きます。
+
+| 左から | 設定 | 回して選べる候補 | 適用操作 |
+|---|---|---|---|
+| 1: Model | 使用モデル | ローカルのモデルキャッシュで`visibility=list`のモデルをpriority順に表示 | 回転停止80ミリ秒後に自動適用 |
+| 2: Reasoning | 推論レベル | 選択モデルが対応するLow、Medium、High、XHigh、Ultra（Maxは送信しない） | 回転停止80ミリ秒後に自動適用 |
+| 3: Speed | 処理速度 | Standard、Fast | 回転停止80ミリ秒後に自動適用 |
+| 4: Access | アクセス方針 | Ask、Delegate、Full、Custom | 回転停止80ミリ秒後に自動適用 |
+
+4本すべて、回して止めるだけで適用します。再回転は前の80ミリ秒待機を取り消し、最後に止めた候補だけを適用します。
+
+| ジェスチャー | 動作 |
+|---|---|
+| 回す | 候補を選ぶ。全4本とも回転停止80ミリ秒後に自動適用する。再回転は前の待機を取り消す。音声入力中は何も変更しない |
+| ダイヤルを押す | 1回目はCodexの音声入力を開始。もう一度押すと文字起こしを完了し、そのテキストを送信する。開始と終了は別のダイヤルでもよい |
+| タッチ領域をタップ | ディスク上の現在設定を再読込し、待機中の自動適用を中止する |
+| タッチ領域を長押し | その項目を既定値へ戻して原子的に適用し、待機中の自動適用を中止する |
+
+音声入力を開始すると、まだ実行されていない全ダイヤルの80ミリ秒待機を取り消します。録音中は通常のアイコンと値を隠し、4画面を1枚の800×100ピクセル表示として扱うアニメーション波形へ切り替えます。終了すると通常表示へ戻ります。
+
+Accessの候補は次の4段階です。
+
+| 表示 | 意味 | 設定値 |
+|---|---|---|
+| Ask | workspace書込み、必要時は本人へ確認 | `approval_policy=on-request`、`approvals_reviewer=user`、`permissions=:workspace` |
+| Delegate | workspace書込み、必要時は代理承認 | `approval_policy=on-request`、`approvals_reviewer=guardian_subagent`、`permissions=:workspace` |
+| Full | フルアクセス、確認なし | `approval_policy=never`、`approvals_reviewer=user`、`permissions=:danger-full-access` |
+| Custom | 現在のconfig.tomlを使う | configから解決したapproval・reviewer・`sandboxPolicy` |
+
+Ask／Delegate／Fullはconfig.tomlの新規タスク既定値も更新します。Customだけはconfig.tomlを書き換えず、今の設定を追跡タスクへ送ります。選んだAccess modeはプラグインのグローバル設定に保存するため、Modelなどを変更してもCustomへ戻りません。旧Strict／Auto／Neverは読み込み互換だけを残し、通常候補には出ません。
+
+タッチ領域の中央アイコンは、ModelがCPU、Reasoningが脳回路、Speedが速度計、Accessが盾とチェックです。アイコンの下には選択中または適用済みの値を1行で表示します。Accessもアンバーの候補表示中、80ミリ秒待つとFullを含めて自動適用します。v0.4.8の物理押下は設定の即時適用ではなく、4本共通の音声入力に使用します。
+
+全Agentタスクへ同期して読み戻しまで一致した場合でも、Deck表示は選択中の値のまま保ちます。成功時の一時的な`Synced`表示は出しません。Customは`activePermissionProfile=null`とsandboxも照合し、古いprofileの残留を成功扱いしません。一部または全件で同期または検証に失敗した場合は4秒間、アンバーで`⚠ X/N`を表示します。追跡タスクがない場合だけ`✓ Default`です。Agentタスクの設定は現在実行中のターン途中では切り替わらず、次のターンから使われます。通常、Codexの再起動は必要ありません。
+
+タッチストリップ上のスワイプは、Stream Deck本体がページ・プロファイル切替に使用します。Elgatoの公開プラグインAPIからスワイプイベントは渡されないため、このプラグインでは各領域のタップと長押しを使用します。
+
+より詳しい対応関係は[機能対応表](docs/CAPABILITY-MAP-ja.md)を参照してください。
+
+## タスクの状態色と形
+
+| 色 | コード | 状態アイコン | 意味 |
+|---|---|---|---|
+| 白 | `#FFFFFF` | 円と点 | アイドル |
+| 青 | `#304FFE` | 回転を表す円弧 | Codexが作業中 |
+| 緑 | `#00FF4C` | 円とチェック | 完了し、まだ確認していない更新がある |
+| アンバー | `#FF6D00` | 円と感嘆符 | 承認または回答が必要 |
+| 赤 | `#FF0033` | 警告の三角形 | エラー |
+| 消灯 | `#000000` | 斜線入りの円 | タスク未割り当て |
+
+色はCodex Microの仕様と同じ意味にそろえています。色だけでなく形でも状態を区別できるため、色の見え方が異なる場合にも判別できます。選択中のAgentは外枠の明滅でも示します。ただし本プラグインはCodexデスクトップ内部の専用ハードウェア接続を使えないため、ローカルのタスク履歴から状態を推定します。
+
+## 動作環境
+
+- macOS 13以降
+- Stream Deck +
+- Stream Deck 7.1以降
+- Codexデスクトップアプリ（bundle ID `com.openai.codex`）
+- ソースからビルドする場合はNode.js 24以降とnpm
+
+Elgatoの現行CLI要件は[Stream Deck CLI公式ドキュメント](https://docs.elgato.com/streamdeck/cli/intro/)で確認できます。
+
+## インストール
+
+### 配布パッケージを使う場合
+
+1. `com.local.codexmicrodeck.streamDeckPlugin`をダブルクリックします。
+2. Stream Deckが表示するプラグインと同梱プロファイルの追加確認を承認します。
+3. Stream Deckアプリのプロファイル一覧から「Codex Micro Deck」を選びます。インストール時に現在のプロファイルを勝手に切り替えない設定です。
+4. Codexデスクトップアプリを起動します。
+5. 初めて音声入力またはショートカット系の操作を使うときにmacOSの許可画面が出たら、後述のアクセシビリティ設定を行います。
+
+同梱プロファイルは8キーと4 Encoderをすべて事前配置しています。プロファイルの同梱形式については[Elgatoの公式ガイド](https://docs.elgato.com/streamdeck/sdk/guides/profiles/)を参照してください。
+
+### ソースからビルドする場合
+
+先に依存関係を用意します。Neverを使っていた可能性がある既存環境からv0.4.1へ更新する場合は、配備前に次の一回限りの移行を完了します。引数なしではdry-runになり、`--apply`を付けたときだけ新規タスクの既定値と重複のない直近6タスクの承認設定をAskへ変更します。これは実設定と実タスクを変更するため、結果を確認してから実行してください。
+
+```sh
+npm install
+node scripts/migrate-approval-ask.mjs
+node scripts/migrate-approval-ask.mjs --apply
+```
+
+`--apply`が成功してから、検証と配布物作成へ進みます。
+
+```sh
+npm run check
+npm run pack
+```
+
+`npm run check`は次の処理を順番に実行します。
+
+1. TypeScriptをビルドする
+2. Nodeテストを実行する
+3. 同梱プロファイルが生成元と一致するか検査する
+4. 依存パッケージを使わない独自バリデータで、manifest、画像、CodePath、Property Inspector、ZIP内部の8キー・4 Encoderを検査する
+5. Elgato公式CLIでもmanifestを検証する
+
+成功すると、`npm run pack`は`dist-v0.4.8-final/`に`.streamDeckPlugin`インストーラを作成します。
+
+開発中にソースフォルダを直接リンクする場合は、次を使用します。
+
+```sh
+npx streamdeck link com.local.codexmicrodeck.sdPlugin
+npx streamdeck restart com.local.codexmicrodeck
+```
+
+`link`はStream Deckのプラグイン領域からソースフォルダへの開発用リンクを作ります。正式な仕様は[streamdeck link](https://docs.elgato.com/streamdeck/cli/commands/link/)を参照してください。
+
+## アクセシビリティ権限
+
+タスクを開く操作はCodexのディープリンクを使用します。Approve／DeclineはCodexの承認要求へIPCで直接応答し、キーボード入力を送りません。一部の追加キー役割はショートカットまたはコマンドパレットから実行します。音声入力はCodex画面の「音声入力」「文字起こしして送信する」ボタンを操作します。4つの設定ダイヤルは`~/.codex/config.toml`を読み書きし、Codexデスクトップが起動中なら追跡中のAgentタスクすべての次ターン用設定も更新します。
+
+画面要素やショートカットの補完にはmacOSのアクセシビリティ権限が必要です。
+
+1. システム設定を開きます。
+2. 「プライバシーとセキュリティ」→「アクセシビリティ」を開きます。
+3. Stream Deck、またはmacOSが許可を求めたStream Deckのヘルパープロセスを有効にします。
+4. 「オートメーション」の確認が出た場合は、System EventsとCodexの操作を許可します。
+5. Stream Deckアプリを再起動します。
+
+権限を与えない場合も状態表示、Agentキーのディープリンク、設定ダイヤルの回転、再読込、適用、既定値へのリセットは利用できますが、ダイヤル押下の音声入力、キーボードショートカット、コマンドパレット操作は失敗します。Property Inspectorの「Codexへの画面・キー操作を有効にする」をOFFにすると、これらのSystem Events操作だけを明示的に停止できます。許可を設定した後でONに戻してください。
+
+## 設定の変更
+
+Stream DeckアプリでキーまたはEncoderを選ぶとProperty Inspectorが開きます。
+
+- キーの「役割」: Agent、承認、高速モード、レビューなどへ再割り当て
+- ダイヤルの「役割」: Model、Reasoning、Speed、Accessへ再割り当て
+- 「最近のタスクを自動で割り当てる」: Agentキーを直近タスクに追従させる
+- 「固定するタスクID」: 自動割り当てをOFFにしたAgentキーを特定のタスクへ固定する。空欄なら未割り当て
+- 「キー操作をカスタマイズ」: キー、およびダイヤルの左右回転へ`cmd+shift+r`、`escape`などを指定。Model／Reasoning／Speed／Accessの物理押下は音声入力専用で変更不可
+- 「状態の更新」: 1〜30秒。既定は2秒
+- 「Codexへの画面・キー操作を有効にする」: System Events経由の音声入力ボタン、ショートカット、コマンドパレット操作を許可・停止。設定ダイヤルの回転とタッチには影響しない
+
+役割を選ぶと、押す・回す・タップ・長押しで何が起きるかを日本語で表示します。承認と却下には誤操作防止の注意、入力欄には形式エラー、画面上部には保存状態、画面下部にはStream Deckとの接続状態を表示します。
+
+カスタムキー操作は、対象コントロールの対応するキー／回転操作を置き換えます。設定ダイヤルの物理押下による音声入力は置き換えません。まず既定レイアウトで動作確認してから変更してください。
+
+Agentキーを別の役割へ変更した場合や、そのキーがプロファイル／ページから外れた場合は、以前のAgent枠と固定タスクIDを同期対象から直ちに解除します。
+
+## プライバシーとローカルデータ
+
+プラグインは外部サーバーへ通信せず、APIキーやCodexの認証情報を読みません。状態表示のために、次のローカルデータを読み取り専用で参照します。
+
+- `~/.codex/state_5.sqlite`: 直近のユーザー所有タスクとrolloutファイルの場所
+- `~/.codex/sqlite/codex-dev.db`: 未読情報（存在する場合）
+- `~/.codex/sessions/`以下の参照先JSONL: 作業開始、完了、承認待ち、エラーの推定
+
+Model、Reasoning、Speed、Ask／Delegate／Fullを適用するときだけ、`~/.codex/config.toml`を読み書きします。Customは現在値を読むだけです。保存は一時ファイルを経由した原子的な置き換えで行います。Codexデスクトップが起動中は、同じMac上の所有者限定Unixソケット（`~/.codex/ipc/ipc.sock`）への常設接続で、現在follow中のタスクへ同じpatchの即時反映を先に開始し、承認要求の受信・応答を行います。次ターン設定の永続化は、ChatGPT／Codexアプリ同梱のCodex App Serverをその同期batch中だけ1回起動し、各exact ID内では`thread/resume`→`thread/settings/update`→読み戻しの順を保ったまま、対象タスク間だけ並列に行います。Desktop IPCの失敗は永続化成功を妨げず、完了・失敗にかかわらず必ず停止します。Codexのデータベースやrolloutファイルを直接書き換えることはありません。
+
+v0.4.6のAgentキーはタスク名を表示しますが、タスクIDは表示しません。長い名前は通常時に省略し、選択中だけ横へ流します。プラグイン設定と「確認済み」のローカル状態は、Stream Deckの設定保存機能に書き込みます。Codexのデータベースやrolloutファイルには書き込みません。
+
+音声機能はCodexの音声入力を起動するだけで、このプラグイン自身はマイク音声を録音・保存しません。Deck上の波形は録音中を分かりやすく示すアニメーションで、実際のマイク音量データではありません。
+
+操作に失敗した場合は、キーまたはダイヤルの役割とイベント種別、短いエラー理由をStream Deckのプラグインログへ記録します。ログへ出す前に、タスクID、タスクURL、ユーザーフォルダのパス、複数行のプロセス出力を除去します。タスク本文やタイトルは記録しません。
+
+## 既知の制約
+
+- Codexデスクトップとのタスク設定連携は、同じユーザーで起動中のCodexへ接続するローカル経路を利用します。公開互換APIではないため、Codex更新後に一時的に利用できなくなる可能性があります。その場合も新規タスク用の既定値は`~/.codex/config.toml`へ保存し、Deckへ`⚠ 0/N`を表示します。
+- CodexのローカルDB形式と日本語コマンド名も公開互換APIではありません。Codex更新後に状態表示やUI補完が一時的に動かなくなる可能性があります。
+- 自動割り当ては「直近6件」と「キーごとの固定タスクID」に対応します。Codex Microの「Pinned優先」「Priority順」の自動モードは未実装です。
+- ApproveとDeclineは、コマンド実行またはファイル変更の実承認待ちがある間だけ点灯し、Codexデスクトップの正規IPCメソッドで要求IDへ直接応答します。質問だけの場合はAgentキーがアンバーでもApprove／Declineは消灯し、Codex側で回答します。複数タスクに要求がある場合は明示的に選択したAgentを最優先し、未選択なら現在表示中の一意な対象を使います。それでも決まらない場合や、同じタスクに複数の実承認要求がある場合は推測せずCodex側での操作を求めます。実行中の重複操作と同じ要求への2重応答も拒否します。
+- キーへ割り当てるFast、Plan、Fork、Skills、Reviewなどの追加操作はCodexのコマンドパレットに依存します。アプリの表示言語やコマンド名変更の影響を受けます。
+- ダイヤルの音声入力はCodex画面の英語・日本語アクセシビリティラベルへ完全一致して操作します。Codex更新でボタン名や画面構造が変わると、一時的に開始または送信できなくなる可能性があります。
+- 設定ダイヤルは選択した値を`~/.codex/config.toml`へ保存した後（Customを除く）、Agent 1〜6の各論理枠で解決した最大6タスクを重複排除して同期します。自動枠は対応する直近タスク、固定枠は指定ID、未割り当て枠は対象なしです。固定枠が同じ位置の自動タスクを置き換えるため、両方を足して7件以上へ誤同期しません。1項目だけでなく、保存済みのModel、Reasoning、Speed、Accessを完全な組として送り、古いタスク固有設定を残しません。現在実行中のターン途中は変更しません。
+- Stream Deck SDKはタッチストリップのスワイプをプラグインへ公開しません。スワイプはStream Deck本体のページ・プロファイル切替として残ります。
+- Codex Micro固有のバッテリー表示、専用ライトアニメーション、追加ハードウェアレイヤーは再現しません。Stream Deckの明るさやスリープはStream Deckアプリで管理します。
+
+[Codex App Serverの公式仕様](https://learn.chatgpt.com/docs/app-server)を、全同期対象の次ターン設定を永続化する正規経路に使います。1つの同期batchごとに`experimentalApi`を有効にして1プロセスを起動し、各exact ID内ではresume、完全設定の送信、読み戻し検証を順に行い、異なるタスク間だけ並列にします。常設Desktop followerの更新はfollow中タスクへの即時反映を先に開始しますが、成功件数はApp Serverで永続化できた件数を基準にします。batchは完了前にDesktop更新も必ず待つため、古いpatchが後から新しいダイヤル操作を上書きしません。既に実行中のターンを途中変更する機能ではありません。タスクの状態表示は引き続きローカルDBとrollout、および常設Desktop followerから推定します。
+
+## トラブルシューティング
+
+### Agentキーが消灯したまま
+
+まずProperty Inspectorで「最近のタスクを自動で割り当てる」を確認します。OFFで「固定するタスクID」が空欄なら、未割り当て表示は正常です。自動割り当てがONの場合は、Codexでユーザー所有タスクを1件以上作り、Stream Deckを再起動してください。このプラグインは内部の承認レビュアーやサブエージェントを除外し、通常のユーザータスクだけを割り当てます。Codex更新直後にDB形式が変わった場合は、タスクIDを固定して切り分けできます。
+
+### キーに警告マークが出る、操作が反応しない
+
+Codexが起動していることと、macOSのアクセシビリティ・オートメーション権限を確認します。権限変更後はStream Deckを再起動してください。追加キー役割だけが失敗する場合は、Codexの表示言語またはコマンド名変更の可能性があります。
+
+### ダイヤルの変更がCodexタスクへ反映されない
+
+成功時は選択中の値がそのまま残り、各タスクの次のターンから反映されます。いま既に実行中のターンや、ちょうど返答を生成している途中のターンはその場では切り替わりません。`⚠ X/N`なら一部または全部のタスクで失敗したため、Codexが起動していることを確認して同じ値を再適用します。全件失敗は`⚠ 0/N`です。`✓ Default`は追跡タスクがなく新規タスクの既定値だけを保存した状態です。どの場合も新規タスクの既定値は保存済みで、通常はCodexの再起動は不要です。
+
+### ダイヤルを押しても音声入力が始まらない
+
+Codexを開き、macOSのアクセシビリティ・オートメーション権限と、Property Inspectorの「Codexへの画面・キー操作を有効にする」を確認します。Codex自身のマイク権限が無効な場合は「システム設定」→「プライバシーとセキュリティ」→「マイク」も確認します。録音中は波形表示になり、ダイヤル回転は意図的に無効です。もう一度どれかの設定ダイヤルを押すと、Codex自身が文字起こしと送信を行います。
+
+### 色が実際の状態と合わない
+
+更新は既定で2秒間隔です。少し待っても変わらない場合は、Codexで対象タスクを開き直し、Property Inspectorの「状態の更新」を確認してください。状態は公式ハードウェア接続ではなくrolloutイベントからの推定です。
+
+### 同梱プロファイルが見つからない
+
+Stream Deckのプロファイル管理画面で「Codex Micro Deck」を探します。見つからない場合は、プラグインフォルダ内の`profiles/Codex Micro Deck.streamDeckProfile`を手動で開いてインポートできます。現在のプロファイルは自動で置き換えません。
+
+## アンインストール
+
+開発用リンクは、プロジェクトディレクトリで次を実行すると解除できます。ソースフォルダは削除されません。
+
+```sh
+npx streamdeck unlink com.local.codexmicrodeck
+```
+
+通常インストールしたプラグインは、Stream Deckアプリのプラグイン管理画面から「Codex Micro Deck」をアンインストールします。同梱プロファイルが残る場合があります。不要であることを確認してから、プロファイル管理画面で別途削除してください。
+
+## 公式資料
+
+- [Codex Micro](https://learn.chatgpt.com/docs/features/codex-micro)
+- [Codex Commands](https://learn.chatgpt.com/docs/reference/commands)
+- [Codex App Server](https://learn.chatgpt.com/docs/app-server)
+- [OpenAI Supply Co. / Work Louder](https://openai.com/supply/co-lab/work-louder/)
+- [Stream Deck SDK](https://docs.elgato.com/streamdeck/sdk/)
+- [Dials & Touch Strip](https://docs.elgato.com/streamdeck/sdk/guides/dials/)
+- [Bundled Profiles](https://docs.elgato.com/streamdeck/sdk/guides/profiles/)
+- [Stream Deck CLI](https://docs.elgato.com/streamdeck/cli/intro/)
+
+## ライセンスと商標
+
+Codex、ChatGPT、Codex MicroはOpenAIの名称です。Stream DeckはElgatoの名称です。このリポジトリは両社から承認・配布された公式プラグインではありません。
