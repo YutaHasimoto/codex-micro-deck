@@ -23,7 +23,13 @@ function feedbackRecord(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-test("selected task marquee uses a smooth bounded update cadence", () => {
+function waveformRange(svg: string): number {
+  const path = svg.match(/data-waveform-main="true" d="([^"]+)"/)?.[1] ?? "";
+  const ys = [...path.matchAll(/(?:M|L)[\d.]+,([\d.]+)/g)].map((match) => Number(match[1]));
+  return ys.length ? Math.max(...ys) - Math.min(...ys) : 0;
+}
+
+test("Agent task marquee uses a smooth bounded update cadence", () => {
   assert.equal(KEY_MARQUEE_INTERVAL_MS, 100);
 });
 
@@ -56,7 +62,7 @@ test("agent keys keep their bot, number, state, and selected frame while adding 
   }
 });
 
-test("unselected long Japanese and English task names stay clipped and ellipsized", () => {
+test("all visible long Japanese and English task names enter marquee mode", () => {
   for (const title of [
     "長い日本語のタスク名をキーの中で安全に読みやすく表示する",
     "Implement a long English task title without covering the status badge"
@@ -69,29 +75,27 @@ test("unselected long Japanese and English task names stay clipped and ellipsize
       selected: false
     }, 20));
     assert.match(svg, /clip-path="url\(#agent-title-clip\)"/);
-    assert.match(svg, /data-title-mode="static"/);
-    assert.match(svg, /…<\/text>/);
-    assert.doesNotMatch(svg, /data-marquee-offset="[1-9]/);
-    assert.doesNotMatch(svg, new RegExp(title));
+    assert.match(svg, /data-title-mode="marquee"/);
+    assert.equal((svg.match(new RegExp(title, "g")) ?? []).length, 2);
   }
 });
 
-test("only selected long task names marquee left after a short pause", () => {
+test("all visible long task names marquee left after a short pause in 10px steps", () => {
   for (const title of [
-    "選択中の長い日本語タスク名だけがゆっくり横へ流れる",
-    "Only the selected long English task title should scroll"
+    "表示中の長い日本語タスク名がそれぞれゆっくり横へ流れる",
+    "Every visible long English task title should scroll independently"
   ]) {
     const paused = decodeDataUrl(renderKeyImage({
       color: "blue",
       primary: "Agent 2",
       secondary: title,
-      selected: true
+      selected: false
     }, 2));
     const moving = decodeDataUrl(renderKeyImage({
       color: "blue",
       primary: "Agent 2",
       secondary: title,
-      selected: true
+      selected: false
     }, 5));
     assert.match(paused, /data-title-mode="marquee" data-marquee-offset="0"/);
     assert.match(moving, /data-title-mode="marquee" data-marquee-offset="30"/);
@@ -140,6 +144,21 @@ test("approve and decline keys are icon-only and use upstream Lucide geometry", 
   assert.match(decline, /data-lucide="circle-x"/);
   assert.match(decline, /m15 9-6 6/);
   assert.doesNotMatch(`${approve}${decline}`, /<text\b|Approve|Decline|Enter|Escape/);
+});
+
+test("voice key uses the microphone icon and exposes its recording state", () => {
+  const idle = decodeDataUrl(renderKeyImage({
+    color: "white", primary: "Voice", secondary: "Tap to talk"
+  }));
+  const active = decodeDataUrl(renderKeyImage({
+    color: "blue", primary: "Voice", secondary: "Listening…"
+  }));
+
+  assert.match(idle, /data-lucide="mic"/);
+  assert.match(idle, />Tap to talk<\/text>/);
+  assert.match(active, /data-lucide="mic"/);
+  assert.match(active, /#304FFE/);
+  assert.match(active, />Listening…<\/text>/);
 });
 
 test("each default encoder has a central Lucide pixmap and only a short current value", () => {
@@ -222,6 +241,43 @@ test("voice waveform advances by frame while safely clamping its dial slice", ()
   );
 });
 
+test("voice waveform amplitude follows the bounded microphone RMS level", () => {
+  const presentation = {
+    color: "blue",
+    title: "Voice",
+    value: "Listening…",
+    hint: "",
+    mode: "voice",
+    slice: 0
+  } as const;
+  const quiet = decodeDataUrl(
+    renderEncoderFeedback(presentation, 4, 0).waveform as string
+  );
+  const loud = decodeDataUrl(
+    renderEncoderFeedback(presentation, 4, 1).waveform as string
+  );
+
+  assert.match(quiet, /data-level="0\.000"/);
+  assert.match(loud, /data-level="1\.000"/);
+  assert.ok(waveformRange(loud) > waveformRange(quiet) * 8);
+});
+
+test("missing optional RMS input keeps the voice waveform active without a permission warning", () => {
+  const feedback = renderEncoderFeedback({
+    color: "blue",
+    title: "Voice",
+    value: "Listening…",
+    hint: "",
+    mode: "voice",
+    slice: 0
+  }, 5, 0);
+  const serialized = JSON.stringify(feedback);
+
+  assert.equal(feedback.value, "");
+  assert.match(decodeDataUrl(feedback.waveform as string), /data-level="0\.000"/);
+  assert.doesNotMatch(serialized, /Allow Mic|#FF6D00/);
+});
+
 test("the four focused encoder icons use vendored upstream Lucide geometry", () => {
   const presentations = [
     { color: "white", title: "Model", value: "5.6 Sol", hint: "" },
@@ -241,7 +297,7 @@ test("the four focused encoder icons use vendored upstream Lucide geometry", () 
 
 test("property inspector separates trailing config apply from the shared voice toggle", () => {
   const inspector = readFileSync(
-    new URL("../com.local.codexmicrodeck.sdPlugin/ui/property-inspector.js", import.meta.url),
+    new URL("../works.kawaii.codex-shortcuts-plugin.sdPlugin/ui/property-inspector.js", import.meta.url),
     "utf8"
   );
   const encoderRoles = inspector.match(/const ENCODER_ROLES = \[([\s\S]*?)\n  \];/)?.[1] ?? "";
@@ -251,36 +307,50 @@ test("property inspector separates trailing config apply from the shared voice t
     ["model", "reasoning", "speed", "approval"]
   );
   for (const copy of [
-    "候補を選ぶ", "現在設定を再読込", "既定値へ戻して適用",
-    "次のターン", "新規タスクの既定値", "Codexの再起動"
+    "Choose a", "Reload current settings", "Reset to",
+    "next turn", "new-task default", "does not need to restart"
   ]) {
     assert.match(encoderRoles, new RegExp(copy));
   }
-  assert.equal((encoderRoles.match(/80ミリ秒後に自動適用/g) ?? []).length, 4);
+  assert.equal((encoderRoles.match(/automatically applies 80 ms after rotation stops/g) ?? []).length, 4);
   assert.equal(
-    (encoderRoles.match(/音声入力を開始／もう一度押して文字起こし・送信/g) ?? []).length,
+    (encoderRoles.match(/Start dictation \/ press again to transcribe and send/g) ?? []).length,
     4
   );
-  assert.doesNotMatch(encoderRoles, /待たずに今すぐ適用|Fullは4秒以内にもう一度押す/);
-  assert.match(inspector, /通常成功時は選択中の値のまま/);
-  assert.match(inspector, /ダイヤル押下は共通の音声入力です/);
-  for (const accessDetail of ["workspace書込み", "代理承認", "フルアクセス"]) {
+  assert.doesNotMatch(encoderRoles, /apply immediately|press Full again within 4 seconds/);
+  assert.match(inspector, /successful update keeps the selected value visible/);
+  assert.match(inspector, /uses the shared dictation control/);
+  for (const accessDetail of ["workspace writes", "delegated approval", "full access"]) {
     assert.match(encoderRoles, new RegExp(accessDetail));
   }
   for (const accessValue of ["Ask", "Delegate", "Full", "Custom"]) {
     assert.match(encoderRoles, new RegExp(accessValue));
   }
-  assert.match(encoderRoles, /Fullも回転停止後80ミリ秒で適用します/);
-  assert.match(encoderRoles, /Customだけはconfig\.tomlを変更せず/);
-  assert.match(inspector, /role\("legacy-reasoning", "旧レイアウト（互換）：推論"/);
+  assert.match(encoderRoles, /including Full/);
+  assert.match(encoderRoles, /Only Custom leaves config\.toml unchanged/);
+  assert.match(inspector, /role\("legacy-reasoning", "Legacy Layout: Reasoning"/);
   assert.match(inspector, /function isFocusedEncoder\(value\)/);
   assert.match(inspector, /function rolesForCurrentAction\(\)/);
   assert.match(inspector, /return legacy \? \[legacy, \.\.\.ENCODER_ROLES\] : ENCODER_ROLES/);
 });
 
+test("marketplace-facing manifest and property inspector copy are English", () => {
+  const pluginRoot = new URL(
+    "../works.kawaii.codex-shortcuts-plugin.sdPlugin/",
+    import.meta.url
+  );
+  const publicCopy = [
+    readFileSync(new URL("manifest.json", pluginRoot), "utf8"),
+    readFileSync(new URL("ui/property-inspector.html", pluginRoot), "utf8"),
+    readFileSync(new URL("ui/property-inspector.js", pluginRoot), "utf8")
+  ].join("\n");
+
+  assert.doesNotMatch(publicCopy, /[ぁ-んァ-ン一-龯々]/u);
+});
+
 test("encoder layout centers the icon and covers the full dial strip slice with its waveform overlay", () => {
   const layout = JSON.parse(readFileSync(
-    new URL("../com.local.codexmicrodeck.sdPlugin/layouts/encoder.json", import.meta.url),
+    new URL("../works.kawaii.codex-shortcuts-plugin.sdPlugin/layouts/encoder.json", import.meta.url),
     "utf8"
   )) as {
     items: Array<{
@@ -311,19 +381,22 @@ test("encoder layout centers the icon and covers the full dial strip slice with 
 });
 
 test("manifest icons use the same vendored Lucide geometry", () => {
-  const iconDir = new URL("../com.local.codexmicrodeck.sdPlugin/imgs/", import.meta.url);
+  const iconDir = new URL("../works.kawaii.codex-shortcuts-plugin.sdPlugin/imgs/", import.meta.url);
   const keyIcon = readFileSync(new URL("action-key.svg", iconDir), "utf8");
   const encoderIcon = readFileSync(new URL("action-encoder.svg", iconDir), "utf8");
   const categoryIcon = readFileSync(new URL("category-icon.svg", iconDir), "utf8");
 
   assert.match(keyIcon, /M12 8V4H8/);
   assert.match(encoderIcon, /M15 6v12a3 3 0 1 0 3-3H6/);
-  assert.match(categoryIcon, /M12 5a3 3 0 1 0-5\.997\.125/);
+  assert.match(categoryIcon, /M12 8V4H8/);
 });
 
 test("the distributed plugin carries the Lucide and Feather license notices", () => {
   const notice = readFileSync(
-    new URL("../com.local.codexmicrodeck.sdPlugin/THIRD_PARTY_NOTICES.md", import.meta.url),
+    new URL(
+      "../works.kawaii.codex-shortcuts-plugin.sdPlugin/THIRD_PARTY_NOTICES.md",
+      import.meta.url
+    ),
     "utf8"
   );
   assert.match(notice, /658573b0171e693bc965c167592cc0b92d002a3e/);

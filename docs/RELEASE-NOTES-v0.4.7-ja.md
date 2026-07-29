@@ -1,4 +1,4 @@
-# Codex Micro Deck v0.4.7 リリースノート
+# Codex Shortcuts Plugin v0.4.7 リリースノート
 
 ## Standard速度の読み戻し検証を修正
 

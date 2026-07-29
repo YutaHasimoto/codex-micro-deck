@@ -1,12 +1,16 @@
 # 日本語README
 
-Codex Micro Deckは、Stream Deck +の8キー、4ダイヤル、4つのタッチ領域をCodex操作に使うmacOS向けプラグインです。
+Codex Shortcuts Pluginは、Stream Deck +の8キー、4ダイヤル、4つのタッチ領域をCodex操作に使うmacOS向けプラグインです。
 
-v0.4.8では、4本の設定ダイヤルのどれを押してもCodexの音声入力を開始し、もう一度押すと文字起こししたテキストを送信します。録音中は4画面を横断する同期波形を表示し、設定を誤変更しないよう全ダイヤルの回転を無効化します。録音していないときの80ミリ秒自動適用やAgentタスク同期は継続します。
+v0.4.12では、右下キーを専用のVoiceボタンに変更しました。Voiceキーまたは4本の設定ダイヤルのどれかを1回押すとCodexの音声入力を開始し、もう一度押すと文字起こししたテキストを送信します。
+
+v0.4.13では、Voiceの開始経路をCodexの編集メニューと入力欄付近の音声ボタンへ限定し、処理中の連打、録音中の別操作、停止失敗、キー消失時の状態残留を安全側で抑止します。通常のコマンドパレット操作は、誤入力・誤送信防止のため一時的にfail-closedです。
 
 - セットアップ、全操作、権限、プライバシー、制約: [メインREADME](README.md)
 - 最短の導入手順と日常操作: [かんたん操作ガイド](GUIDE-ja.md)
 - Codex Microとの対応関係: [機能対応表](docs/CAPABILITY-MAP-ja.md)
+- v0.4.13の音声入力安全性修正: [リリースノート](docs/RELEASE-NOTES-v0.4.13-ja.md)
+- v0.4.12の専用Voiceキー: [リリースノート](docs/RELEASE-NOTES-v0.4.12-ja.md)
 - v0.4.8のダイヤル音声入力と全幅波形: [リリースノート](docs/RELEASE-NOTES-v0.4.8-ja.md)
 - v0.4.7のStandard速度読み戻し修正: [旧リリースノート](docs/RELEASE-NOTES-v0.4.7-ja.md)
 - v0.4.6のAgentタスク名表示: [旧リリースノート](docs/RELEASE-NOTES-v0.4.6-ja.md)

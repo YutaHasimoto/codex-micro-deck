@@ -1,4 +1,4 @@
-# Codex Micro Deck v0.4.5 リリースノート
+# Codex Shortcuts Plugin v0.4.5 リリースノート
 
 ## 全設定ダイヤルを80ミリ秒へ統一
 

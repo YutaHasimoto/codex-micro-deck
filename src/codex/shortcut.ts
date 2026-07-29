@@ -54,61 +54,6 @@ export function shortcutAppleScript(shortcut: ParsedShortcut, settleDelaySeconds
   ].join("\n");
 }
 
-/**
- * Opens Codex's command palette and selects one exact, caller-supplied label.
- * JSON string encoding keeps quotes, backslashes, and line breaks inside the
- * AppleScript string literal instead of letting them become script source.
- */
-export function commandPaletteAppleScript(label: string): string {
-  return [
-    "tell application id \"com.openai.codex\" to activate",
-    "tell application \"System Events\"",
-    "  tell first process whose bundle identifier is \"com.openai.codex\"",
-    "    set frontmost to true",
-    "    repeat 30 times",
-    "      if frontmost then exit repeat",
-    "      delay 0.05",
-    "    end repeat",
-    "    if not frontmost then error \"Codex did not become frontmost\" number 1708",
-    "    set originalFocus to missing value",
-    "    repeat 20 times",
-    "      delay 0.05",
-    "      try",
-    "        set candidateFocus to value of attribute \"AXFocusedUIElement\"",
-    "        if candidateFocus is not missing value then",
-    "          set originalFocus to candidateFocus",
-    "          exit repeat",
-    "        end if",
-    "      end try",
-    "    end repeat",
-    "    if originalFocus is missing value then error \"Codex did not become ready\" number 1708",
-    "    keystroke \"k\" using {command down}",
-    "    set paletteFocus to missing value",
-    "    repeat 20 times",
-    "      delay 0.05",
-    "      try",
-    "        set candidateFocus to value of attribute \"AXFocusedUIElement\"",
-    "        if candidateFocus is not originalFocus then",
-    "          set paletteFocus to candidateFocus",
-    "          exit repeat",
-    "        end if",
-    "      end try",
-    "    end repeat",
-    "    if paletteFocus is missing value then error \"Codex command palette did not receive focus\" number 1708",
-    "    try",
-    `      set value of attribute \"AXValue\" of paletteFocus to ${JSON.stringify(label)}`,
-    "    on error",
-    `      keystroke ${JSON.stringify(label)}`,
-    "    end try",
-    "    delay 0.12",
-    "    set currentFocus to value of attribute \"AXFocusedUIElement\"",
-    "    if currentFocus is not paletteFocus then error \"Codex command palette lost focus\" number 1708",
-    "    key code 36",
-    "  end tell",
-    "end tell"
-  ].join("\n");
-}
-
 function normalizeDelay(value: number): string {
   if (!Number.isFinite(value)) return "0.08";
   return Math.max(0.02, Math.min(1, value)).toFixed(2);

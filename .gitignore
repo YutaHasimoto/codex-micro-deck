@@ -1,7 +1,9 @@
 node_modules/
 *.streamDeckPlugin
-com.local.codexmicrodeck.sdPlugin/bin/
-com.local.codexmicrodeck.sdPlugin/logs/
+works.kawaii.codex-shortcuts-plugin.sdPlugin/bin/
+works.kawaii.codex-shortcuts-plugin.sdPlugin/logs/
 *.log
 .DS_Store
 work/
+marketplace/evidence/current-stream-deck.jpeg
+dist-marketplace-v0.4.13-prelicense/

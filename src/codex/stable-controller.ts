@@ -1,10 +1,10 @@
 import {
-  commandPaletteAppleScript,
   parseShortcut,
   shortcutAppleScript,
   type ParsedShortcut
 } from "./shortcut.js";
 import {
+  DICTATION_PRESS_MARKER,
   dictationButtonAppleScript,
   type DictationButtonAction
 } from "./accessibility-controller.js";
@@ -12,6 +12,8 @@ import { runProcess, type ProcessResult } from "../system/process.js";
 
 export type StableCommand = "submit" | "new-chat" | "interrupt";
 export type DictationDisposition = "insert" | "send";
+export type DictationStartResult = "start-confirmed" | "already-active";
+export type DictationStopResult = "pressed" | "already-idle";
 export type PaletteCommand =
   | "fast" | "plan" | "fork" | "skills" | "review"
   | "reasoning-open" | "reasoning-up" | "reasoning-down";
@@ -20,18 +22,6 @@ const OFFICIAL_SHORTCUTS: Record<StableCommand, string> = {
   submit: "return",
   "new-chat": "cmd+n",
   interrupt: "escape"
-};
-
-/** Exact Japanese command labels embedded in the current Codex desktop app. */
-const PALETTE_LABELS: Record<PaletteCommand, string> = {
-  fast: "高速モードを切り替え",
-  plan: "プランモードの切り替え",
-  fork: "新しいタスクで続ける",
-  skills: "スキルに移動",
-  review: "レビュータブを開く",
-  "reasoning-open": "推論の負荷を切り替える",
-  "reasoning-up": "推論の負荷を上げる",
-  "reasoning-down": "推論の負荷を下げる"
 };
 
 type ProcessRunner = typeof runProcess;
@@ -93,26 +83,25 @@ export class StableCodexController {
 
   async runPaletteCommand(command: PaletteCommand): Promise<void> {
     this.#requireAccessibility();
-    await this.#enqueueUi(async () => {
-      const result = await this.#processRunner(
-        "/usr/bin/osascript",
-        ["-e", commandPaletteAppleScript(PALETTE_LABELS[command])],
-        { timeoutMs: 3500, maxOutputBytes: 16 * 1024 }
-      );
-      if (result.exitCode !== 0) throw new Error(`Codex command palette action failed: ${command}`);
-    });
+    throw new Error(
+      `Codex command palette action is unavailable because the selected command row cannot be verified: ${command}`
+    );
   }
 
   async navigate(direction: "back" | "forward"): Promise<void> {
     await this.runShortcutText(direction === "back" ? "cmd+[" : "cmd+]");
   }
 
-  async startDictation(): Promise<void> {
-    await this.#pressDictationButton("start");
+  async startDictation(): Promise<DictationStartResult> {
+    const result = await this.#pressDictationButton("start");
+    if (result === "start-confirmed" || result === "already-active") return result;
+    throw new Error("Unreachable dictation start result");
   }
 
-  async stopDictation(disposition: DictationDisposition): Promise<void> {
-    await this.#pressDictationButton(disposition);
+  async stopDictation(disposition: DictationDisposition): Promise<DictationStopResult> {
+    const result = await this.#pressDictationButton(disposition);
+    if (result === "pressed" || result === "already-idle") return result;
+    throw new Error("Unreachable dictation stop result");
   }
 
   #requireAccessibility(): void {
@@ -130,20 +119,43 @@ export class StableCodexController {
     if (result.exitCode !== 0) throw new Error("Codex keyboard shortcut failed");
   }
 
-  async #pressDictationButton(action: DictationButtonAction): Promise<void> {
+  async #pressDictationButton(
+    action: DictationButtonAction
+  ): Promise<DictationStartResult | DictationStopResult> {
     this.#requireAccessibility();
-    await this.#enqueueUi(async () => {
+    return this.#enqueueUi(async () => {
       const result = await this.#processRunner(
         "/usr/bin/osascript",
         ["-e", dictationButtonAppleScript(action)],
-        { timeoutMs: 3500, maxOutputBytes: 16 * 1024 }
+        { timeoutMs: action === "start" ? 10_000 : 8_000, maxOutputBytes: 16 * 1024 }
       );
+      // Dictation actions are not idempotent. In particular, retrying send
+      // after an outer timeout could submit the same transcription twice.
+      // The generated AppleScript bounds AXPress acknowledgement separately,
+      // so this controller always issues at most one physical press.
       if (result.exitCode !== 0) {
         const reason = classifyDictationFailure(result);
-        throw new Error(
-          `Codex dictation accessibility action failed: ${action} (${reason}; exit ${result.exitCode})`
-        );
+        throw dictationActionError(action, reason, result.exitCode);
       }
+      const token = result.stdout.trim();
+      if (
+        action === "start"
+        && (token === "start-confirmed" || token === "already-active")
+      ) {
+        return token;
+      }
+      if (
+        action !== "start"
+        && (token === "pressed" || token === "already-idle")
+      ) {
+        return token;
+      }
+      const reason = token === "press-indeterminate"
+        ? "press-indeterminate"
+        : token.length === 0
+          ? "empty-result"
+          : "invalid-result";
+      throw dictationActionError(action, reason, result.exitCode);
     });
   }
 
@@ -170,7 +182,13 @@ function threadUrl(threadId: string): string {
 
 function classifyDictationFailure(result: ProcessResult): string {
   const diagnostic = `${result.stdout}\n${result.stderr}`.toLowerCase();
+  if (result.exitCode === -1) {
+    return diagnostic.includes(DICTATION_PRESS_MARKER.toLowerCase())
+      ? "press-indeterminate"
+      : "timed-out";
+  }
   if (diagnostic.includes("composer accessibility path changed")) return "composer-path-changed";
+  if (diagnostic.includes("dictation start was not confirmed")) return "start-not-confirmed";
   if (diagnostic.includes("dictation control was not found")) return "control-not-found";
   if (diagnostic.includes("dictation control is ambiguous")) return "control-ambiguous";
   if (diagnostic.includes("main window is unavailable or ambiguous")) return "main-window-unavailable";
@@ -191,4 +209,14 @@ function classifyDictationFailure(result: ProcessResult): string {
     return "accessibility-permission-denied";
   }
   return "unknown";
+}
+
+function dictationActionError(
+  action: DictationButtonAction,
+  reason: string,
+  exitCode: number
+): Error {
+  return new Error(
+    `Codex dictation accessibility action failed: ${action} (${reason}; exit ${exitCode})`
+  );
 }

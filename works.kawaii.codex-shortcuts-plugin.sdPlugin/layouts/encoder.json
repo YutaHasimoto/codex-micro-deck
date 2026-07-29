@@ -1,0 +1,52 @@
+{
+  "$schema": "https://schemas.elgato.com/streamdeck/plugins/layout.json",
+  "id": "works.kawaii.codex-shortcuts-plugin.encoder-layout",
+  "items": [
+    {
+      "key": "backdrop",
+      "type": "bar",
+      "rect": [0, 0, 200, 100],
+      "value": 100,
+      "range": { "min": 0, "max": 100 },
+      "background": "#101318",
+      "bar_bg_c": "#101318",
+      "bar_fill_c": "#101318",
+      "border_w": 0,
+      "zOrder": 0
+    },
+    {
+      "key": "accent",
+      "type": "bar",
+      "rect": [0, 96, 200, 4],
+      "value": 100,
+      "range": { "min": 0, "max": 100 },
+      "background": "#304FFE",
+      "bar_bg_c": "#304FFE",
+      "bar_fill_c": "#304FFE",
+      "border_w": 0,
+      "zOrder": 1
+    },
+    {
+      "key": "icon",
+      "type": "pixmap",
+      "rect": [64, 5, 72, 72],
+      "zOrder": 2
+    },
+    {
+      "key": "value",
+      "type": "text",
+      "rect": [8, 78, 184, 17],
+      "font": { "size": 13, "weight": 700 },
+      "color": "#FFFFFF",
+      "alignment": "center",
+      "text-overflow": "ellipsis",
+      "zOrder": 2
+    },
+    {
+      "key": "waveform",
+      "type": "pixmap",
+      "rect": [0, 0, 200, 100],
+      "zOrder": 3
+    }
+  ]
+}

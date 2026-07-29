@@ -1,0 +1,85 @@
+{
+  "$schema": "https://schemas.elgato.com/streamdeck/plugins/manifest.json",
+  "Actions": [
+    {
+      "Name": "Codex Task Shortcuts",
+      "UUID": "works.kawaii.codex-shortcuts-plugin.key",
+      "Icon": "imgs/action-key",
+      "Tooltip": "Open Codex tasks, run guarded actions, or start and send dictation.",
+      "Controllers": [
+        "Keypad"
+      ],
+      "DisableCaching": true,
+      "PropertyInspectorPath": "ui/property-inspector.html",
+      "States": [
+        {
+          "Image": "imgs/action-key",
+          "ShowTitle": false,
+          "TitleAlignment": "bottom"
+        }
+      ]
+    },
+    {
+      "Name": "Codex Settings Dial",
+      "UUID": "works.kawaii.codex-shortcuts-plugin.encoder",
+      "Icon": "imgs/action-encoder",
+      "Tooltip": "Rotate to sync Model, Reasoning, Speed, or Access for new tasks and tracked Agents; press to start or send Codex dictation.",
+      "Controllers": [
+        "Encoder"
+      ],
+      "PropertyInspectorPath": "ui/property-inspector.html",
+      "States": [
+        {
+          "Image": "imgs/action-encoder",
+          "ShowTitle": false
+        }
+      ],
+      "Encoder": {
+        "Icon": "imgs/action-encoder",
+        "layout": "layouts/encoder.json",
+        "StackColor": "#304FFE",
+        "TriggerDescription": {
+          "Rotate": "Choose a value (syncs after 80 ms; disabled during dictation)",
+          "Push": "Start dictation / press again to transcribe and send",
+          "Touch": "Reload settings (hold to reset to the default)"
+        }
+      }
+    }
+  ],
+  "ApplicationsToMonitor": {
+    "mac": [
+      "com.openai.codex"
+    ]
+  },
+  "Author": "KAWAII",
+  "Category": "Codex Shortcuts Plugin",
+  "CategoryIcon": "imgs/category-icon",
+  "CodePath": "bin/plugin.js",
+  "Description": "Control Codex from every key, dial, and touch strip control on Stream Deck +.",
+  "Icon": "imgs/plugin-icon",
+  "Name": "Codex Shortcuts Plugin",
+  "Nodejs": {
+    "Version": "24"
+  },
+  "OS": [
+    {
+      "Platform": "mac",
+      "MinimumVersion": "13.0"
+    }
+  ],
+  "Profiles": [
+    {
+      "Name": "profiles/Codex Shortcuts Plugin",
+      "DeviceType": 7,
+      "AutoInstall": true,
+      "DontAutoSwitchWhenInstalled": true,
+      "Readonly": false
+    }
+  ],
+  "SDKVersion": 3,
+  "Software": {
+    "MinimumVersion": "7.1"
+  },
+  "UUID": "works.kawaii.codex-shortcuts-plugin",
+  "Version": "0.4.13.0"
+}

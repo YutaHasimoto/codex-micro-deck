@@ -25,6 +25,7 @@ import {
   renderEncoderFeedback,
   VOICE_WAVEFORM_INTERVAL_MS
 } from "../render/encoder-feedback.js";
+import { MicrophoneLevelMonitor } from "../system/microphone-level.js";
 import {
   ENCODER_ACTION_UUID,
   type DeckCoordinates,
@@ -38,13 +39,29 @@ export class CodexEncoderAction extends SingletonAction<EncoderSettings> {
   #refreshQueued = false;
   #refreshPromise: Promise<void> | undefined;
   #voiceFrame = 0;
+  #voiceLevel = 0;
   #voiceTransitions = 0;
+  readonly #microphoneMonitor = new MicrophoneLevelMonitor({
+    // This helper only animates the Deck waveform. Codex records through its
+    // own microphone permission, so a denied helper must remain non-fatal.
+    logger: (message) => streamDeck.logger.info(message)
+  });
 
   constructor(readonly coordinator: CodexDeckCoordinator) {
     super();
-    coordinator.onEncoderChange(() => this.refreshVisible());
+    coordinator.onEncoderChange(() => {
+      if (!coordinator.voiceActive) {
+        this.#resetMicrophoneSession();
+      }
+      return this.refreshVisible();
+    });
     const voiceTimer = setInterval(() => {
-      if (!coordinator.voiceActive) return;
+      if (!coordinator.voiceActive) {
+        this.#resetMicrophoneSession();
+        return;
+      }
+      this.#microphoneMonitor.start();
+      this.#voiceLevel = this.#microphoneMonitor.level;
       this.#voiceFrame += 1;
       void this.refreshVisible();
     }, VOICE_WAVEFORM_INTERVAL_MS);
@@ -105,7 +122,9 @@ export class CodexEncoderAction extends SingletonAction<EncoderSettings> {
       const route = dialPhysicalRoute(role, "down");
       if (route === "voice-toggle") {
         const starting = !this.coordinator.voiceActive;
-        if (starting) this.#voiceTransitions += 1;
+        if (starting) {
+          this.#voiceTransitions += 1;
+        }
         try {
           if (starting) {
             // Show an immediate full-strip waveform while Accessibility moves
@@ -202,13 +221,14 @@ export class CodexEncoderAction extends SingletonAction<EncoderSettings> {
     while (this.#refreshQueued) {
       this.#refreshQueued = false;
       const frame = this.#voiceFrame;
+      const voiceLevel = this.#voiceLevel;
       const tasks: Promise<void>[] = [];
       this.actions.forEach((visibleAction) => {
         if (!visibleAction.isDial()) return;
         tasks.push((async () => {
           const settings = await visibleAction.getSettings<EncoderSettings>();
           try {
-            await this.render(visibleAction, settings, visibleAction.coordinates, frame);
+            await this.render(visibleAction, settings, visibleAction.coordinates, frame, voiceLevel);
           } catch (error) {
             this.#logFailure("refresh", settings, visibleAction.coordinates, error);
           }
@@ -222,7 +242,8 @@ export class CodexEncoderAction extends SingletonAction<EncoderSettings> {
     actionInstance: StreamDeckDialAction<EncoderSettings>,
     settings: EncoderSettings,
     coordinates: DeckCoordinates,
-    frame = this.#voiceFrame
+    frame = this.#voiceFrame,
+    voiceLevel = this.#voiceLevel
   ): Promise<void> {
     const presentation: EncoderPresentation =
       this.#voiceTransitions > 0 && !this.coordinator.voiceActive
@@ -236,9 +257,14 @@ export class CodexEncoderAction extends SingletonAction<EncoderSettings> {
           }
         : this.coordinator.encoderPresentation(settings, coordinates);
     await Promise.all([
-      actionInstance.setFeedback(renderEncoderFeedback(presentation, frame)),
+      actionInstance.setFeedback(renderEncoderFeedback(presentation, frame, voiceLevel)),
       actionInstance.setTriggerDescription(triggerDescriptionForRole(settings, coordinates))
     ]);
+  }
+
+  #resetMicrophoneSession(): void {
+    this.#microphoneMonitor.stop();
+    this.#voiceLevel = 0;
   }
 
   #scheduleTrailingApply(

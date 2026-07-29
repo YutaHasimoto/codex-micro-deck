@@ -1,0 +1,70 @@
+KAWAII Freeware License
+
+Copyright (c) 2026 KAWAII. All rights reserved.
+
+1. License Grant
+
+Subject to compliance with this License, KAWAII grants you a limited,
+non-exclusive, non-transferable, revocable license, free of charge, to
+download, install, and use an unmodified copy of the Codex Shortcuts Plugin
+(the "Software") for your personal use or for internal use within your
+organization. An organization may install the unmodified Software on devices
+that it owns or controls solely for its own internal use.
+
+2. Restrictions
+
+Unless KAWAII gives prior written permission, you may not:
+
+(a) sell, rent, lease, charge for, or otherwise commercially distribute the
+Software;
+
+(b) redistribute, publish, provide, transmit, or otherwise make the Software
+available to any third party;
+
+(c) repackage, bundle, wrap, or include the Software in another product,
+installer, archive, or distribution;
+
+(d) host or mirror the Software or make it available from another download
+location;
+
+(e) sublicense, assign, or transfer this License or any rights granted under
+it; or
+
+(f) modify, adapt, translate, reverse engineer, decompile, disassemble, create
+derivative works from, or distribute a modified version of the Software.
+
+Nothing in this License limits or excludes any right, exception, or defense
+that applicable law does not permit KAWAII to limit or exclude.
+
+3. Ownership
+
+The Software is licensed, not sold. KAWAII retains all right, title, and
+interest in and to the Software, including all intellectual property rights,
+except for third-party components identified in THIRD_PARTY_NOTICES.md.
+
+4. Third-Party Components
+
+Third-party components included with the Software are governed by their
+respective license terms stated in THIRD_PARTY_NOTICES.md. If this License
+conflicts with a third-party license for a third-party component, that
+third-party license controls for that component.
+
+5. No Warranty
+
+TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, THE SOFTWARE IS PROVIDED
+"AS IS" AND "AS AVAILABLE," WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+WHETHER EXPRESS, IMPLIED, OR STATUTORY, INCLUDING WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE, AND
+NON-INFRINGEMENT. KAWAII DOES NOT WARRANT THAT THE SOFTWARE WILL BE
+UNINTERRUPTED, ERROR-FREE, SECURE, OR SUITABLE FOR ANY PARTICULAR PURPOSE.
+
+TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, KAWAII WILL NOT BE LIABLE
+FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, EXEMPLARY, OR PUNITIVE
+DAMAGES, OR FOR ANY LOSS OF DATA, PROFITS, REVENUE, BUSINESS, OR USE, ARISING
+OUT OF OR RELATED TO THE SOFTWARE OR THIS LICENSE.
+
+6. Termination
+
+This License terminates automatically if you violate any of its terms. Upon
+termination, you must stop using the Software and delete all copies in your
+possession or control. Sections 2 through 5 survive termination.

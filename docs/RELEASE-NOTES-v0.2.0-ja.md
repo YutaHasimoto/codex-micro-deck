@@ -1,4 +1,4 @@
-# Codex Micro Deck v0.2.0 リリースノート
+# Codex Shortcuts Plugin v0.2.0 リリースノート
 
 リリース日: 2026年7月21日
 
@@ -65,7 +65,7 @@ ApproveとDeclineは、先に選択したアンバーのAgentだけを対象に�
 
 ## 更新後の確認
 
-1. Stream Deckアプリで「Codex Micro Deck」プロファイルを選びます。
+1. Stream Deckアプリで「Codex Shortcuts Plugin」プロファイルを選びます。
 2. 8キーが大きなアイコンで表示されることを確認します。
 3. 4つのタッチ領域がそれぞれ異なるアイコンになっていることを確認します。
 4. Agentキーを選び、設定画面に日本語の操作説明と保存状態が表示されることを確認します。

@@ -10,7 +10,7 @@ export const OFFICIAL_STATE_COLORS = {
 export type ModelKeyRole =
   | "agent-1" | "agent-2" | "agent-3" | "agent-4" | "agent-5" | "agent-6"
   | "approve" | "decline" | "fast" | "submit" | "new-chat" | "fork"
-  | "ptt" | "interrupt" | "review" | "skills" | "open-codex" | "refresh";
+  | "ptt" | "voice-toggle" | "interrupt" | "review" | "skills" | "open-codex" | "refresh";
 export type ModelEncoderRole =
   | "model" | "reasoning" | "speed" | "approval"
   | "legacy-reasoning" | "navigation" | "skills" | "composer" | "review" | "voice";
@@ -21,7 +21,7 @@ const GRAPHEME_SEGMENTER = new Intl.Segmenter(undefined, { granularity: "graphem
 
 const KEY_ROLES: readonly ModelKeyRole[] = [
   "agent-1", "agent-2", "agent-3", "agent-4",
-  "agent-5", "agent-6", "approve", "decline"
+  "agent-5", "agent-6", "approve", "voice-toggle"
 ];
 const ENCODER_ROLES: readonly ModelEncoderRole[] = ["model", "reasoning", "speed", "approval"];
 
@@ -53,7 +53,7 @@ export function roleLabel(role: ModelKeyRole | ModelEncoderRole): string {
   if (index !== undefined) return `Agent ${index + 1}`;
   const labels: Record<string, string> = {
     approve: "Approve", decline: "Decline", fast: "Fast", submit: "Submit",
-    "new-chat": "New Chat", fork: "Fork", ptt: "Voice", interrupt: "Stop",
+    "new-chat": "New Chat", fork: "Fork", ptt: "Voice", "voice-toggle": "Voice", interrupt: "Stop",
     review: "Review", skills: "Skills", "open-codex": "Codex", refresh: "Refresh",
     model: "Model", reasoning: "Reasoning", speed: "Speed", approval: "Access",
     "legacy-reasoning": "Reasoning (Legacy)",

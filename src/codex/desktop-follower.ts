@@ -24,8 +24,10 @@ const STATE_CHANGED_VERSION = 11;
 
 export type PendingApprovalKind = "command" | "file" | "other";
 
+export type ApprovalRequestId = string | number;
+
 export type PendingApproval = {
-  requestId: string;
+  requestId: ApprovalRequestId;
   kind: PendingApprovalKind;
   method: string;
 };
@@ -91,7 +93,7 @@ export class CodexDesktopFollower {
    * decided requests are hidden at the projection layer instead and pruned
    * once the owner's own patch confirms the removal.
    */
-  readonly #decidedLocally = new Map<string, Set<string>>();
+  readonly #decidedLocally = new Map<string, Set<ApprovalRequestId>>();
   readonly #pending = new Map<string, PendingApproval[]>();
   readonly #revisions = new Map<string, number>();
   readonly #lastSnapshotRequestAt = new Map<string, number>();
@@ -196,7 +198,7 @@ export class CodexDesktopFollower {
     }
     // Hide the answered request immediately, but never mutate #rawRequests:
     // the owner's later patches index into its own unfiltered array.
-    const decided = this.#decidedLocally.get(conversationId) ?? new Set<string>();
+    const decided = this.#decidedLocally.get(conversationId) ?? new Set<ApprovalRequestId>();
     decided.add(approval.requestId);
     this.#decidedLocally.set(conversationId, decided);
     this.#refreshPendingFromRaw(conversationId);
@@ -533,11 +535,17 @@ export function parseRequests(value: unknown): PendingApproval[] {
     if (!record) return [];
     const id = record.id;
     const method = record.method;
-    if (typeof id !== "string" || !id || typeof method !== "string") return [];
+    if (!isApprovalRequestId(id) || typeof method !== "string") return [];
     const kind = APPROVAL_REQUEST_KINDS[method];
     if (!kind) return [];
     return [{ requestId: id, kind, method }];
   });
+}
+
+function isApprovalRequestId(value: unknown): value is ApprovalRequestId {
+  return typeof value === "string"
+    ? value.length > 0
+    : typeof value === "number" && Number.isSafeInteger(value);
 }
 
 type RequestsPatchResult = {

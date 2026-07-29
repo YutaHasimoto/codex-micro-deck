@@ -1,5 +1,9 @@
 import { LocalCodexStateProvider } from "./codex/local-state-provider.js";
-import { StableCodexController } from "./codex/stable-controller.js";
+import {
+  StableCodexController,
+  type DictationStartResult,
+  type DictationStopResult
+} from "./codex/stable-controller.js";
 import {
   CodexAppServerClient,
   resolveCodexCliPath
@@ -54,13 +58,20 @@ const CONVERSATION_ID_PATTERN = /^[0-9a-f-]{16,64}$/i;
 
 type PersistGlobalSettings = (settings: GlobalSettings) => Promise<void>;
 type ChangeListener = () => void | Promise<void>;
+type CoordinatorCodexController = Pick<StableCodexController,
+  "accessibilityEnabled" | "openThread" | "openApp" | "runCommand"
+  | "runShortcutText" | "runPaletteCommand" | "navigate"> & {
+    startDictation(): Promise<DictationStartResult | void>;
+    stopDictation(
+      disposition: Parameters<StableCodexController["stopDictation"]>[0]
+    ): Promise<DictationStopResult | void>;
+  };
+type VoiceToggleResult =
+  | "started" | "synced" | "sent" | "already-idle" | "ignored";
 
 export type CoordinatorDependencies = {
   provider?: Pick<LocalCodexStateProvider, "listRecentThreads">;
-  codex?: Pick<StableCodexController,
-    "accessibilityEnabled" | "openThread" | "openApp" | "runCommand"
-    | "runShortcutText" | "runPaletteCommand" | "navigate"
-    | "startDictation" | "stopDictation">;
+  codex?: CoordinatorCodexController;
   config?: Pick<CodexConfigController, "read" | "applyControl" | "resetControl">;
   liveSettings?: Pick<CodexDesktopIpcClient, "updateThreadSettings">;
   appServer?: Pick<CodexAppServerClient, "start" | "stop" | "request">;
@@ -136,8 +147,8 @@ export class CodexDeckCoordinator {
   );
   #approvalInFlight = false;
   #dialDictationActive = false;
-  #dialDictationQueue: Promise<void> = Promise.resolve();
-  readonly #dialPressOwners = new Set<string>();
+  #voiceToggleInFlight = false;
+  readonly #voiceTogglePressOwners = new Set<string>();
   #legacyVoiceOwner: string | undefined;
   #legacyVoiceActuallyActive = false;
   #legacyVoiceSync: Promise<void> = Promise.resolve();
@@ -208,7 +219,11 @@ export class CodexDeckCoordinator {
     for (const timer of this.#controlSuccessTimers.values()) clearTimeout(timer);
     this.#controlSuccessTimers.clear();
     this.#controlFeedback.clear();
-    this.#dialPressOwners.clear();
+    this.#dialDictationActive = false;
+    this.#voiceToggleInFlight = false;
+    this.#voiceTogglePressOwners.clear();
+    this.#legacyVoiceOwner = undefined;
+    this.#legacyVoiceActuallyActive = false;
   }
 
   onChange(listener: ChangeListener): () => void {
@@ -372,7 +387,8 @@ export class CodexDeckCoordinator {
 
     const secondary: Record<string, string> = {
       approve: "Accept", decline: "Reject", fast: "Toggle", submit: "Enter",
-      "new-chat": "⌘N", fork: "New task", ptt: "Dictation", interrupt: "Stop",
+      "new-chat": "⌘N", fork: "New task", ptt: "Hold to talk",
+      "voice-toggle": this.voiceActive ? "Listening…" : "Tap to talk", interrupt: "Stop",
       review: "Open tab", skills: "Open", "open-codex": "Launch", refresh: "Reload"
     };
     if (role === "approve" || role === "decline") {
@@ -383,6 +399,13 @@ export class CodexDeckCoordinator {
           : "off",
         primary: roleLabel(role),
         secondary: actionable.size ? secondary[role] ?? "Codex" : "No request"
+      };
+    }
+    if (role === "voice-toggle") {
+      return {
+        color: this.voiceActive ? "blue" : "white",
+        primary: roleLabel(role),
+        secondary: secondary[role] ?? "Tap to talk"
       };
     }
     return {
@@ -454,8 +477,19 @@ export class CodexDeckCoordinator {
     return { color: "white", title: roleLabel(role), value: "Open", hint: "press to run" };
   }
 
-  async pressKey(settings: KeySettings, coordinates: DeckCoordinates): Promise<void> {
+  async pressKey(
+    settings: KeySettings,
+    coordinates: DeckCoordinates,
+    actionId?: string
+  ): Promise<VoiceToggleResult | void> {
     const role = keyRole(settings, coordinates);
+    if (this.voiceActive && role !== "voice-toggle") return "ignored";
+    if (role === "voice-toggle") {
+      const owner = `key:${actionId ?? `${coordinates.column}:${coordinates.row}`}`;
+      if (this.#voiceTogglePressOwners.has(owner)) return "ignored";
+      this.#voiceTogglePressOwners.add(owner);
+      return this.#toggleDialDictation();
+    }
     if (settings.shortcut && agentIndex(role) === undefined) {
       await this.#codex.runShortcutText(settings.shortcut);
       return;
@@ -481,9 +515,28 @@ export class CodexDeckCoordinator {
     await this.#runKeyRole(role);
   }
 
-  async releaseKey(settings: KeySettings, coordinates: DeckCoordinates): Promise<void> {
-    if (settings.shortcut || keyRole(settings, coordinates) !== "ptt") return;
-    await this.#stopLegacyVoice(`key:${coordinates.column}:${coordinates.row}`);
+  async releaseKey(
+    settings: KeySettings,
+    coordinates: DeckCoordinates,
+    actionId?: string
+  ): Promise<void> {
+    if (actionId) this.releaseVoiceToggleKey(actionId);
+    const role = keyRole(settings, coordinates);
+    if (role === "voice-toggle") {
+      if (!actionId) {
+        this.#voiceTogglePressOwners.delete(`key:${coordinates.column}:${coordinates.row}`);
+      }
+      return;
+    }
+    if (role === "ptt") {
+      await this.#stopLegacyVoice(`key:${coordinates.column}:${coordinates.row}`);
+      return;
+    }
+    if (settings.shortcut) return;
+  }
+
+  releaseVoiceToggleKey(actionId: string): void {
+    this.#voiceTogglePressOwners.delete(`key:${actionId}`);
   }
 
   async rotateEncoder(settings: EncoderSettings, coordinates: DeckCoordinates, ticks: number): Promise<EncoderSettings> {
@@ -542,12 +595,12 @@ export class CodexDeckCoordinator {
     settings: EncoderSettings,
     coordinates: DeckCoordinates,
     actionId?: string
-  ): Promise<"started" | "sent" | "ignored" | void> {
+  ): Promise<VoiceToggleResult | void> {
     const role = encoderRole(settings, coordinates);
     const owner = `dial:${actionId ?? `${coordinates.column}:${coordinates.row}`}`;
     if (isConfigControlRole(role)) {
-      if (this.#dialPressOwners.has(owner)) return "ignored";
-      this.#dialPressOwners.add(owner);
+      if (this.#voiceTogglePressOwners.has(owner)) return "ignored";
+      this.#voiceTogglePressOwners.add(owner);
       return this.#toggleDialDictation();
     }
     if (role !== "composer" && role !== "voice") return;
@@ -561,7 +614,7 @@ export class CodexDeckCoordinator {
   ): Promise<void> {
     const role = encoderRole(settings, coordinates);
     const owner = `dial:${actionId ?? `${coordinates.column}:${coordinates.row}`}`;
-    this.#dialPressOwners.delete(owner);
+    this.#voiceTogglePressOwners.delete(owner);
     if (isConfigControlRole(role)) return;
     if (role !== "composer" && role !== "voice") return;
     await this.#stopLegacyVoice(owner);
@@ -569,11 +622,12 @@ export class CodexDeckCoordinator {
 
   async releaseDial(actionId: string): Promise<void> {
     const owner = `dial:${actionId}`;
-    this.#dialPressOwners.delete(owner);
+    this.#voiceTogglePressOwners.delete(owner);
     await this.#stopLegacyVoice(owner);
   }
 
   async touchEncoder(settings: EncoderSettings, coordinates: DeckCoordinates, hold: boolean): Promise<void> {
+    if (this.voiceActive) return;
     const role = encoderRole(settings, coordinates);
     if (isConfigControlRole(role)) {
       if (role === "approval") this.#clearFullAccessConfirmation();
@@ -1120,29 +1174,38 @@ export class CodexDeckCoordinator {
     this.#autoAssignedThreadIds = next;
   }
 
-  #toggleDialDictation(): Promise<"started" | "sent"> {
-    const operation = this.#dialDictationQueue.then(async () => {
+  async #toggleDialDictation(): Promise<VoiceToggleResult> {
+    if (this.#voiceToggleInFlight) return "ignored";
+    this.#voiceToggleInFlight = true;
+    try {
       if (this.#legacyVoiceOwner !== undefined || this.#legacyVoiceActuallyActive) {
         throw new Error("Legacy push-to-talk is already controlling Codex dictation");
       }
       if (!this.#dialDictationActive) {
-        await this.#codex.startDictation();
+        const result = await this.#codex.startDictation();
         this.#dialDictationActive = true;
-        this.#notifyEncoders();
-        return "started" as const;
+        this.#notify();
+        return result === "already-active" ? "synced" : "started";
       }
-      await this.#codex.stopDictation("send");
+      let result: DictationStopResult | void;
+      try {
+        result = await this.#codex.stopDictation("send");
+      } catch (error) {
+        this.#dialDictationActive = false;
+        this.#notify();
+        throw error;
+      }
       this.#dialDictationActive = false;
-      this.#notifyEncoders();
-      return "sent" as const;
-    });
-    this.#dialDictationQueue = operation.then(() => undefined, () => undefined);
-    return operation;
+      this.#notify();
+      return result === "already-idle" ? "already-idle" : "sent";
+    } finally {
+      this.#voiceToggleInFlight = false;
+    }
   }
 
   async #startLegacyVoice(owner: string): Promise<void> {
     if (this.#dialDictationActive) {
-      throw new Error("Dial dictation is already active");
+      throw new Error("Toggle dictation is already active");
     }
     if (this.#legacyVoiceOwner === owner) return;
     if (this.#legacyVoiceOwner !== undefined) return;
@@ -1163,9 +1226,9 @@ export class CodexDeckCoordinator {
     try {
       await this.#queueLegacyVoiceSync();
     } catch (error) {
-      if (this.#legacyVoiceActuallyActive && this.#legacyVoiceOwner === undefined) {
-        this.#legacyVoiceOwner = owner;
-      }
+      this.#legacyVoiceOwner = undefined;
+      this.#legacyVoiceActuallyActive = false;
+      this.#notify();
       throw error;
     }
   }
@@ -1177,7 +1240,7 @@ export class CodexDeckCoordinator {
       if (shouldBeActive) await this.#codex.startDictation();
       else await this.#codex.stopDictation("insert");
       this.#legacyVoiceActuallyActive = shouldBeActive;
-      this.#notifyEncoders();
+      this.#notify();
     });
     this.#legacyVoiceSync = operation.catch(() => undefined);
     return operation;

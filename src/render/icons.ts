@@ -85,6 +85,7 @@ export function keyIconForLabel(label: string): LucideIconName {
   if (/^Agent [1-6]$/.test(label)) return "bot";
   if (label === "Approve") return "circle-check-big";
   if (label === "Decline") return "circle-x";
+  if (label === "Voice") return "mic";
   return "command";
 }
 
@@ -108,6 +109,7 @@ export function encoderIconFor(title: string, value: string): LucideIconName {
   if (normalizedTitle === "approval" || normalizedTitle === "承認" || normalizedTitle === "access") {
     return "shield-check";
   }
+  if (normalizedTitle === "voice" || normalizedTitle === "microphone") return "mic";
 
   // Keep old custom profiles recognizable while they migrate to the focused
   // model / reasoning / speed / approval layout.

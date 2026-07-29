@@ -31,6 +31,10 @@ export const DEFAULT_CODEX_CLI_CANDIDATES = [
   "/Applications/ChatGPT.app/Contents/Resources/codex",
   "/Applications/Codex.app/Contents/Resources/codex"
 ] as const;
+// The local provider already selects the six user-owned tasks. Ask App Server
+// for a wider metadata window so unrelated VS Code threads cannot displace one
+// of those six IDs before its human-facing name is merged.
+export const THREAD_NAME_LIST_LIMIT = 100;
 
 /**
  * Optional, isolated Codex App Server transport.
@@ -82,7 +86,11 @@ export class CodexAppServerClient {
 
     try {
       await this.request("initialize", {
-          clientInfo: { name: "codex-micro-deck", title: "Codex Micro Deck", version: "0.4.8" },
+          clientInfo: {
+            name: "codex-shortcuts-plugin",
+            title: "Codex Shortcuts Plugin",
+            version: "0.4.13"
+          },
         capabilities: {
           experimentalApi: options.experimentalApi === true,
           requestAttestation: false,
@@ -129,7 +137,7 @@ export class CodexAppServerClient {
   async pollRecentThreads(): Promise<ThreadSnapshot[]> {
     if (this.#lifecycle !== "running") return [];
     const result = await this.request("thread/list", {
-      limit: 6,
+      limit: THREAD_NAME_LIST_LIMIT,
       archived: false,
       sortKey: "recency_at",
       sortDirection: "desc",

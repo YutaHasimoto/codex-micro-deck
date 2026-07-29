@@ -1,0 +1,1 @@
+90ea169c2083272034989055b029324bb49bd18766c1a137ec5300ae35231990  works.kawaii.codex-shortcuts-plugin.streamDeckPlugin

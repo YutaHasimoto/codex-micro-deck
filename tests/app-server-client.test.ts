@@ -3,8 +3,14 @@ import test from "node:test";
 
 import {
   DEFAULT_CODEX_CLI_CANDIDATES,
+  THREAD_NAME_LIST_LIMIT,
   resolveCodexCliPath
 } from "../src/codex/app-server-client.ts";
+
+test("thread name discovery requests enough rows to cover six local user tasks", () => {
+  assert.equal(THREAD_NAME_LIST_LIMIT, 100);
+  assert.ok(THREAD_NAME_LIST_LIMIT >= 6);
+});
 
 test("Codex CLI resolution prefers the ChatGPT app bundle and requires an executable codex path", async () => {
   assert.equal(

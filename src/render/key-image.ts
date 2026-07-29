@@ -38,11 +38,12 @@ export function renderKeyImage(presentation: KeyPresentation, marqueeFrame = 0):
   const glowOpacity = presentation.selected ? (presentation.pulse ? 0.95 : 0.42) : 0;
   const agentMatch = /^Agent ([1-6])$/.exec(presentation.primary);
   const isAgent = agentMatch !== null;
+  const isVoice = presentation.primary === "Voice";
   const mainIcon = keyIconForLabel(presentation.primary);
   const mainOpacity = presentation.color === "off" ? 0.52 : 1;
-  const iconSize = isAgent ? 60 : 76;
+  const iconSize = isAgent ? 60 : isVoice ? 68 : 76;
   const iconX = (144 - iconSize) / 2;
-  const iconY = isAgent ? 28 : iconX;
+  const iconY = isAgent ? 28 : isVoice ? 24 : iconX;
   const titleBand = isAgent
     ? renderTaskTitleBand(presentation, visibleAccent, marqueeFrame)
     : "";
@@ -60,6 +61,9 @@ export function renderKeyImage(presentation: KeyPresentation, marqueeFrame = 0):
     ? `<circle cx="111" cy="32" r="20" fill="#F8FAFC" stroke="#090C12" stroke-width="4"/>
   <text x="111" y="40" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="24" font-weight="800" fill="#0A0D13">${agentMatch[1]}</text>`
     : "";
+  const voiceLabel = isVoice
+    ? `<text x="72" y="124" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="14" font-weight="700" fill="#F8FAFC">${escapeSvgText(presentation.secondary)}</text>`
+    : "";
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="144" height="144" viewBox="0 0 144 144">
   <rect width="144" height="144" rx="24" fill="#07090D"/>
   <rect x="4" y="4" width="136" height="136" rx="21" fill="none" stroke="${visibleAccent}" stroke-width="5" opacity="${glowOpacity}"/>
@@ -76,11 +80,12 @@ export function renderKeyImage(presentation: KeyPresentation, marqueeFrame = 0):
   ${numberBadge}
   ${titleBand}
   ${statusBadge}
+  ${voiceLabel}
 </svg>`;
   return svgDataUrl(svg);
 }
 
-/** Long names move only while their Agent key is selected. */
+/** Long names move while their Agent key is visible. */
 export function taskTitleNeedsMarquee(value: string): boolean {
   return estimatedTextWidth(normalizeTaskTitle(value)) > TITLE_CLIP_WIDTH;
 }
@@ -91,7 +96,7 @@ function renderTaskTitleBand(
   marqueeFrame: number
 ): string {
   const title = normalizeTaskTitle(presentation.secondary);
-  const frame = taskTitleFrame(title, presentation.selected === true, marqueeFrame);
+  const frame = taskTitleFrame(title, marqueeFrame);
   const second = frame.second !== undefined && frame.secondX !== undefined
     ? `<text x="${frame.secondX}" y="119" ${taskTitleTextAttributes()}>${escapeSvgText(frame.second)}</text>`
     : "";
@@ -107,12 +112,12 @@ function renderTaskTitleBand(
   </g>`;
 }
 
-function taskTitleFrame(title: string, selected: boolean, marqueeFrame: number): TaskTitleFrame {
+function taskTitleFrame(title: string, marqueeFrame: number): TaskTitleFrame {
   const titleWidth = estimatedTextWidth(title);
-  if (titleWidth <= TITLE_CLIP_WIDTH || !selected) {
+  if (titleWidth <= TITLE_CLIP_WIDTH) {
     return {
       mode: "static",
-      first: titleWidth <= TITLE_CLIP_WIDTH ? title : fitStaticTitle(title),
+      first: title,
       firstX: TITLE_CLIP_X,
       offset: 0
     };
@@ -130,21 +135,6 @@ function taskTitleFrame(title: string, selected: boolean, marqueeFrame: number):
     secondX: TITLE_CLIP_X - offset + cycleWidth,
     offset
   };
-}
-
-function fitStaticTitle(title: string): string {
-  const ellipsis = "…";
-  const available = TITLE_CLIP_WIDTH - estimatedTextWidth(ellipsis);
-  let fitted = "";
-  let width = 0;
-  const graphemes = splitGraphemes(title);
-  for (const character of graphemes) {
-    const nextWidth = estimatedCharacterWidth(character);
-    if (width + nextWidth > available) break;
-    fitted += character;
-    width += nextWidth;
-  }
-  return `${fitted || graphemes[0] || ""}${ellipsis}`;
 }
 
 function normalizeTaskTitle(value: string): string {
