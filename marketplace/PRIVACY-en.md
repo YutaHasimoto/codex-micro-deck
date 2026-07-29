@@ -31,7 +31,7 @@ Task content, titles, IDs, task URLs, user-directory paths, and multiline
 process output are excluded.
 
 Contact: https://github.com/YutaHasimoto/codex-micro-deck/issues
-Privacy URL: [SUBMISSION BLOCKER: public privacy URL]
+Privacy URL: https://github.com/YutaHasimoto/codex-micro-deck/blob/main/marketplace/PRIVACY-en.md
 
 Codex Shortcuts Plugin is independent third-party software by KAWAII. It is not
 affiliated with, endorsed by, sponsored by, or supported by OpenAI or Elgato.
