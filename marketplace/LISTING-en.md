@@ -12,4 +12,4 @@ Maker: KAWAII
 Price: Free
 Product: https://github.com/YutaHasimoto/codex-micro-deck
 Support: https://github.com/YutaHasimoto/codex-micro-deck/issues
-Privacy: [SUBMISSION BLOCKER: public privacy URL]
+Privacy: https://github.com/YutaHasimoto/codex-micro-deck/blob/main/marketplace/PRIVACY-en.md
