@@ -6,11 +6,12 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
-const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
+const SCRIPT_FILE = fileURLToPath(import.meta.url);
+const SCRIPT_DIR = dirname(SCRIPT_FILE);
 const PROJECT_DIR = resolve(SCRIPT_DIR, "..");
-const PLUGIN_DIR = join(PROJECT_DIR, "com.local.codexmicrodeck.sdPlugin");
+const PLUGIN_DIR = join(PROJECT_DIR, "works.kawaii.codex-shortcuts-plugin.sdPlugin");
 const SOURCE_DIR = join(PROJECT_DIR, "profile-src");
-const PROFILE_NAME = "Codex Micro Deck";
+const PROFILE_NAME = "Codex Shortcuts Plugin";
 const PROFILE_ROOT_ID = "3E164788-8FC1-4D6E-A05B-9CF12433E33D";
 const PAGE_ID = "AA602386-8869-4B99-AFF3-2BE431B9A90A";
 const PROFILE_ROOT = `${PROFILE_ROOT_ID}.sdProfile`;
@@ -18,11 +19,11 @@ const SOURCE_CONTAINER = join(SOURCE_DIR, `${PROFILE_NAME}.streamDeckProfile.con
 const SOURCE_ROOT = join(SOURCE_CONTAINER, PROFILE_ROOT);
 const SOURCE_PAGE = join(SOURCE_ROOT, "Profiles", PAGE_ID);
 const OUTPUT_FILE = join(PLUGIN_DIR, "profiles", `${PROFILE_NAME}.streamDeckProfile`);
-const PLUGIN_VERSION = "0.4.8.0";
-const KEY_UUID = "com.local.codexmicrodeck.key";
-const ENCODER_UUID = "com.local.codexmicrodeck.encoder";
-const KEY_ACTION_NAME = "Codex タスク";
-const ENCODER_ACTION_NAME = "Codex 操作ダイヤル";
+export const PLUGIN_VERSION = "0.4.13.0";
+const KEY_UUID = "works.kawaii.codex-shortcuts-plugin.key";
+const ENCODER_UUID = "works.kawaii.codex-shortcuts-plugin.encoder";
+const KEY_ACTION_NAME = "Codex Task Shortcuts";
+const ENCODER_ACTION_NAME = "Codex Settings Dial";
 
 const KEY_ASSIGNMENTS = [
   ["0,0", "agent-1", "Agent 1"],
@@ -32,7 +33,7 @@ const KEY_ASSIGNMENTS = [
   ["0,1", "agent-5", "Agent 5"],
   ["1,1", "agent-6", "Agent 6"],
   ["2,1", "approve", "Approve"],
-  ["3,1", "decline", "Decline"]
+  ["3,1", "voice-toggle", "Voice"]
 ];
 
 const ENCODER_ASSIGNMENTS = [
@@ -86,7 +87,7 @@ function actionsFrom(assignments, controller) {
   ]));
 }
 
-function expectedRootManifest() {
+export function expectedRootManifest() {
   const pageRef = PAGE_ID.toLowerCase();
   return {
     Device: { Model: "20GBD9901", UUID: "" },
@@ -99,7 +100,7 @@ function expectedRootManifest() {
   };
 }
 
-function expectedPageManifest() {
+export function expectedPageManifest() {
   return {
     Controllers: [
       { Actions: actionsFrom(ENCODER_ASSIGNMENTS, "Encoder"), Type: "Encoder" },
@@ -123,7 +124,7 @@ function run(command, args, options = {}) {
   return result.stdout;
 }
 
-function validateManifests(rootManifest, pageManifest) {
+export function validateManifests(rootManifest, pageManifest) {
   if (rootManifest.Version !== "3.0") throw new Error("Profile must use the current V3 structure.");
   if (rootManifest.Device?.Model !== "20GBD9901") throw new Error("Profile must target Stream Deck +.");
   if (rootManifest.Device?.UUID !== "") throw new Error("Bundled profile must not bind to one physical device.");
@@ -147,14 +148,29 @@ function validateManifests(rootManifest, pageManifest) {
   }
 
   for (const [coordinate, role] of KEY_ASSIGNMENTS) {
-    if (keypad[coordinate]?.UUID !== KEY_UUID || keypad[coordinate]?.Settings?.role !== role) {
+    const action = keypad[coordinate];
+    if (action?.UUID !== KEY_UUID || action?.Settings?.role !== role) {
       throw new Error(`Invalid key assignment at ${coordinate}.`);
     }
+    validateActionPluginVersion(action, KEY_UUID, "key", coordinate);
   }
   for (const [coordinate, role] of ENCODER_ASSIGNMENTS) {
-    if (encoder[coordinate]?.UUID !== ENCODER_UUID || encoder[coordinate]?.Settings?.role !== role) {
+    const action = encoder[coordinate];
+    if (action?.UUID !== ENCODER_UUID || action?.Settings?.role !== role) {
       throw new Error(`Invalid encoder assignment at ${coordinate}.`);
     }
+    validateActionPluginVersion(action, ENCODER_UUID, "encoder", coordinate);
+  }
+}
+
+function validateActionPluginVersion(action, expectedUuid, kind, coordinate) {
+  if (action?.Plugin?.UUID !== expectedUuid) {
+    throw new Error(`Invalid ${kind} plugin UUID at ${coordinate}.`);
+  }
+  if (action?.Plugin?.Version !== PLUGIN_VERSION) {
+    throw new Error(
+      `Invalid ${kind} plugin version at ${coordinate}: expected ${PLUGIN_VERSION}, got ${String(action?.Plugin?.Version)}.`
+    );
   }
 }
 
@@ -194,18 +210,22 @@ function generate() {
   run("/usr/bin/zip", ["-X", "-q", "-r", OUTPUT_FILE, PROFILE_ROOT], { cwd: SOURCE_CONTAINER });
 }
 
-if (!checkOnly) generate();
-validateSource();
-validateArchive();
+function main() {
+  if (!checkOnly) generate();
+  validateSource();
+  validateArchive();
 
-console.log(JSON.stringify({
-  profile: OUTPUT_FILE,
-  format: "3.0",
-  deviceModel: "20GBD9901",
-  keys: KEY_ASSIGNMENTS.length,
-  encoders: ENCODER_ASSIGNMENTS.length,
-  assignments: {
-    keys: Object.fromEntries(KEY_ASSIGNMENTS.map(([coordinate, role]) => [coordinate, role])),
-    encoders: Object.fromEntries(ENCODER_ASSIGNMENTS.map(([coordinate, role]) => [coordinate, role]))
-  }
-}, null, 2));
+  console.log(JSON.stringify({
+    profile: OUTPUT_FILE,
+    format: "3.0",
+    deviceModel: "20GBD9901",
+    keys: KEY_ASSIGNMENTS.length,
+    encoders: ENCODER_ASSIGNMENTS.length,
+    assignments: {
+      keys: Object.fromEntries(KEY_ASSIGNMENTS.map(([coordinate, role]) => [coordinate, role])),
+      encoders: Object.fromEntries(ENCODER_ASSIGNMENTS.map(([coordinate, role]) => [coordinate, role]))
+    }
+  }, null, 2));
+}
+
+if (process.argv[1] && resolve(process.argv[1]) === SCRIPT_FILE) main();

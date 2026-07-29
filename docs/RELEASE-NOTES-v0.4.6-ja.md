@@ -1,4 +1,4 @@
-# Codex Micro Deck v0.4.6 リリースノート
+# Codex Shortcuts Plugin v0.4.6 リリースノート
 
 ## Agentキーにタスク名を表示
 

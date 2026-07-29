@@ -1,4 +1,4 @@
-# Codex Micro Deck v0.4.8 リリースノート
+# Codex Shortcuts Plugin v0.4.8 リリースノート
 
 ## 4本共通のダイヤル音声入力
 

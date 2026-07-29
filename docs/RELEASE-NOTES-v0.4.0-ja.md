@@ -1,4 +1,4 @@
-# Codex Micro Deck v0.4.0 リリースノート
+# Codex Shortcuts Plugin v0.4.0 リリースノート
 
 リリース日: 2026年7月23日
 

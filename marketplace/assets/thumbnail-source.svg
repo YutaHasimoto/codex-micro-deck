@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="960" viewBox="0 0 1920 960" fill="none">
+  <rect width="1920" height="960" fill="#080B11"/>
+  <circle cx="290" cy="150" r="390" fill="#304FFE" opacity=".16"/>
+  <circle cx="1660" cy="870" r="420" fill="#00FF4C" opacity=".07"/>
+  <rect x="110" y="120" width="620" height="620" rx="144" fill="#0B0E14" stroke="#304FFE" stroke-width="20"/>
+  <g transform="translate(214 224) scale(17)" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/>
+    <path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/>
+  </g>
+  <text x="840" y="270" fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-size="92" font-weight="700">Codex Shortcuts</text>
+  <text x="840" y="370" fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-size="92" font-weight="700">Plugin</text>
+  <text x="846" y="470" fill="#AAB4C8" font-family="Arial, Helvetica, sans-serif" font-size="38">Tactile task status and controls</text>
+  <text x="846" y="525" fill="#AAB4C8" font-family="Arial, Helvetica, sans-serif" font-size="38">for Stream Deck + on macOS</text>
+  <g font-family="Arial, Helvetica, sans-serif" font-size="28" font-weight="700">
+    <rect x="840" y="600" width="178" height="62" rx="31" fill="#304FFE"/><text x="878" y="641" fill="#FFFFFF">6 TASKS</text>
+    <rect x="1038" y="600" width="174" height="62" rx="31" fill="#172033"/><text x="1073" y="641" fill="#FFFFFF">4 DIALS</text>
+    <rect x="1232" y="600" width="185" height="62" rx="31" fill="#172033"/><text x="1266" y="641" fill="#FFFFFF">VOICE</text>
+  </g>
+  <text x="846" y="760" fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-size="32" font-weight="700">KAWAII</text>
+  <text x="846" y="810" fill="#77839A" font-family="Arial, Helvetica, sans-serif" font-size="24">Independent third-party plugin</text>
+</svg>

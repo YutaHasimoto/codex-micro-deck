@@ -1,22 +1,25 @@
 {
-  "name": "codex-micro-deck",
-  "version": "0.4.8",
+  "name": "codex-shortcuts-plugin",
+  "version": "0.4.13",
   "private": true,
   "type": "module",
-  "description": "A Stream Deck + control surface for the Codex desktop app.",
+  "description": "Codex Shortcuts Plugin for Stream Deck +.",
+  "author": "KAWAII",
+  "license": "SEE LICENSE IN LICENSE",
   "engines": {
     "node": ">=24"
   },
   "scripts": {
     "build": "rollup -c --forceExit",
-    "watch": "rollup -c -w --watch.onEnd=\"streamdeck restart com.local.codexmicrodeck\"",
+    "mic:build": "node scripts/build-mic-level-meter.mjs",
+    "watch": "rollup -c -w --watch.onEnd=\"streamdeck restart works.kawaii.codex-shortcuts-plugin\"",
     "profile:generate": "node scripts/generate-plus-profile.mjs",
     "profile:check": "node scripts/generate-plus-profile.mjs --check",
     "test": "node --import ./tests/register-typescript.mjs --test tests/*.test.ts",
     "validate": "node scripts/validate.mjs",
-    "validate:sdk": "streamdeck validate --no-update-check com.local.codexmicrodeck.sdPlugin",
+    "validate:sdk": "streamdeck validate --no-update-check works.kawaii.codex-shortcuts-plugin.sdPlugin",
     "check": "npm run build && npm run test && npm run profile:check && npm run validate && npm run validate:sdk",
-    "pack": "npm run check && streamdeck pack --force --no-update-check --output dist-v0.4.8-final com.local.codexmicrodeck.sdPlugin"
+    "pack": "npm run check && streamdeck pack --no-update-check --output dist-marketplace-v0.4.13 works.kawaii.codex-shortcuts-plugin.sdPlugin"
   },
   "dependencies": {
     "@elgato/streamdeck": "^2.0.1"

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,12 +8,17 @@ import { inflateRawSync } from "node:zlib";
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const PROJECT_DIR = resolve(SCRIPT_DIR, "..");
-const PLUGIN_DIR = join(PROJECT_DIR, "com.local.codexmicrodeck.sdPlugin");
+const PLUGIN_DIR = join(PROJECT_DIR, "works.kawaii.codex-shortcuts-plugin.sdPlugin");
 const MANIFEST_PATH = join(PLUGIN_DIR, "manifest.json");
 const PACKAGE_PATH = join(PROJECT_DIR, "package.json");
+const LICENSE_PATH = join(PROJECT_DIR, "LICENSE");
+const THIRD_PARTY_NOTICES_PATH = join(PROJECT_DIR, "THIRD_PARTY_NOTICES.md");
 const PLUGIN_SOURCE_PATH = join(PROJECT_DIR, "src", "plugin.ts");
+const MICROPHONE_METER_BUILD_PATH = join(PROJECT_DIR, "scripts", "build-mic-level-meter.mjs");
 
-const PLUGIN_UUID = "com.local.codexmicrodeck";
+const PLUGIN_UUID = "works.kawaii.codex-shortcuts-plugin";
+const PLUGIN_NAME = "Codex Shortcuts Plugin";
+const PLUGIN_AUTHOR = "KAWAII";
 const KEY_UUID = `${PLUGIN_UUID}.key`;
 const ENCODER_UUID = `${PLUGIN_UUID}.encoder`;
 const DEVICE_MODEL = "20GBD9901";
@@ -24,7 +30,7 @@ const EXPECTED_KEYS = new Map([
   ["0,1", "agent-5"],
   ["1,1", "agent-6"],
   ["2,1", "approve"],
-  ["3,1", "decline"]
+  ["3,1", "voice-toggle"]
 ]);
 const EXPECTED_ENCODERS = new Map([
   ["0,0", "model"],
@@ -72,8 +78,15 @@ function validatePackageAndManifest() {
   const packageJson = readJson(PACKAGE_PATH, "package.json");
   const manifest = readJson(MANIFEST_PATH, "plugin manifest");
   const pluginSource = readFileSync(PLUGIN_SOURCE_PATH, "utf8");
+  const microphoneMeterBuild = readFileSync(MICROPHONE_METER_BUILD_PATH, "utf8");
+  const license = readFileSync(LICENSE_PATH, "utf8");
+  const thirdPartyNotices = readFileSync(THIRD_PARTY_NOTICES_PATH, "utf8");
 
   check(manifest.UUID === PLUGIN_UUID, `Plugin UUID must be ${PLUGIN_UUID}.`);
+  check(manifest.Name === PLUGIN_NAME, `Plugin name must be ${PLUGIN_NAME}.`);
+  check(manifest.Author === PLUGIN_AUTHOR, `Plugin author must be ${PLUGIN_AUTHOR}.`);
+  check(packageJson.license === "SEE LICENSE IN LICENSE",
+    "package.json must point readers to the custom LICENSE file.");
   check(manifest.SDKVersion === 3, "SDKVersion must be 3 for the Stream Deck + profile.");
   check(manifest.Nodejs?.Version === "24", "The plugin runtime must target Node.js 24.");
   check(Number.parseFloat(manifest.Software?.MinimumVersion) >= 7.1, "Stream Deck 7.1 or newer is required.");
@@ -87,14 +100,63 @@ function validatePackageAndManifest() {
     && manifest.Version.startsWith(`${packageJson.version}.`),
   "package.json and manifest versions must agree.");
   check(typeof packageJson.scripts?.pack === "string"
-    && packageJson.scripts.pack.includes(`--output dist-v${packageJson.version}-final `),
-  "The pack script must write to the current versioned final directory.");
+    && packageJson.scripts.pack.includes(`--output dist-marketplace-v${packageJson.version} `),
+  "The pack script must write to the current versioned marketplace directory.");
   check(/streamDeck\.settings\.useExperimentalMessageIdentifiers\s*=\s*true;\s*await streamDeck\.connect\(\);/m.test(pluginSource),
     "The plugin must filter internal settings-request responses before connecting.");
+
+  const bundledLicense = requireResource("LICENSE", "Plugin license", [""]);
+  const bundledThirdPartyNotices = requireResource(
+    "THIRD_PARTY_NOTICES.md",
+    "Third-party notices",
+    [""]
+  );
+  check(readFileSync(bundledLicense, "utf8") === license,
+    "The bundled LICENSE must exactly match the root LICENSE.");
+  check(readFileSync(bundledThirdPartyNotices, "utf8") === thirdPartyNotices,
+    "The bundled third-party notices must exactly match the root notices.");
+  const normalizedLicense = license.replace(/\s+/g, " ");
+  for (const requiredLicenseTerm of [
+    "KAWAII Freeware License",
+    "Copyright (c) 2026 KAWAII. All rights reserved.",
+    "free of charge",
+    "personal use",
+    "internal use within your organization",
+    "install, and use an unmodified copy",
+    "commercially distribute",
+    "repackage",
+    "mirror",
+    "sublicense",
+    "applicable law does not permit KAWAII to limit or exclude",
+    "KAWAII retains all right, title, and interest",
+    "THIRD_PARTY_NOTICES.md",
+    "WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND",
+    "terminates automatically"
+  ]) {
+    check(normalizedLicense.toLowerCase().includes(requiredLicenseTerm.toLowerCase()),
+      `LICENSE is missing the required term: ${requiredLicenseTerm}`);
+  }
 
   requirePngPair(manifest.Icon, "Plugin icon", [256, 256], [512, 512]);
   requireResource(manifest.CategoryIcon, "Category icon");
   requireResource(manifest.CodePath, "CodePath", [""]);
+  const microphoneMeter = requireResource("bin/mic-level-meter", "Microphone level meter", [""]);
+  check((statSync(microphoneMeter).mode & 0o111) !== 0,
+    "Microphone level meter must be executable.");
+  const microphoneMeterLoadCommands = execFileSync("/usr/bin/otool", ["-l", microphoneMeter], {
+    encoding: "utf8"
+  });
+  check(!microphoneMeterLoadCommands.includes("__info_plist"),
+    "Microphone level meter binary must not contain an embedded app Info.plist.");
+  check(!microphoneMeterBuild.includes("mic-level-meter-info.plist")
+    && !microphoneMeterBuild.includes("-sectcreate"),
+  "Microphone level meter must not embed an app Info.plist.");
+  check(!microphoneMeterBuild.includes("--identifier"),
+    "Microphone level meter must not declare an independent code-signing identifier.");
+  check(microphoneMeterBuild.includes(
+    'const output = join(root, "works.kawaii.codex-shortcuts-plugin.sdPlugin", "bin", "mic-level-meter");'
+  ),
+    "Microphone level meter must remain a direct non-app child executable.");
 
   check(Array.isArray(manifest.Actions) && manifest.Actions.length === 2,
     "The manifest must contain exactly one key action and one encoder action.");
@@ -121,12 +183,12 @@ function validatePackageAndManifest() {
   check(Array.isArray(encoderAction.Controllers) && encoderAction.Controllers.length === 1
     && encoderAction.Controllers[0] === "Encoder", "The encoder action must target Encoder only.");
   requireResource(encoderAction.Encoder?.Icon, "Encoder icon");
-  check(encoderAction.Tooltip?.includes("押下でCodexの音声入力を開始・送信"),
+  check(encoderAction.Tooltip?.includes("press to start or send Codex dictation"),
     "The encoder tooltip must explain the shared dictation action.");
   check(encoderAction.Encoder?.TriggerDescription?.Push
-    === "音声入力を開始／もう一度押して文字起こし・送信",
+    === "Start dictation / press again to transcribe and send",
   "The encoder push description must explain start, transcription, and send.");
-  check(encoderAction.Encoder?.TriggerDescription?.Rotate?.includes("音声入力中は無効"),
+  check(encoderAction.Encoder?.TriggerDescription?.Rotate?.includes("disabled during dictation"),
     "The encoder rotate description must explain the voice lock.");
   const layoutPath = requireResource(encoderAction.Encoder?.layout, "Encoder layout", [""]);
   validateLayout(readJson(layoutPath, "encoder layout"));
@@ -211,8 +273,8 @@ function validatePropertyInspector(propertyInspectorPath) {
 
   check(localScripts.length > 0, "Property inspector must load a local JavaScript file.");
   check(localStyles.length > 0, "Property inspector must load a local stylesheet.");
-  check(/<html\b[^>]*\blang=["']ja["']/i.test(html),
-    "Property inspector must declare Japanese as its primary language.");
+  check(/<html\b[^>]*\blang=["']en["']/i.test(html),
+    "Property inspector must declare English as its primary language.");
   check(!/\son[a-z]+\s*=/i.test(html),
     "Property inspector must not use inline event handlers.");
   check(!/[✓⌘]/u.test(html) && !html.includes("notice-icon") && !html.includes("connection-dot"),
@@ -239,8 +301,8 @@ function validatePropertyInspector(propertyInspectorPath) {
     "The accessibility runtime switch must remain visible and editable.");
 
   for (const requiredCopy of [
-    "タスクID", "承認待ち", "アクセシビリティ", "OFFでも状態表示",
-    "ダイヤル押下の音声入力は停止"
+    "Task ID", "approval request", "Accessibility", "remain available when this is off",
+    "Pressing a dial will not start dictation"
   ]) {
     check(html.includes(requiredCopy), `Property inspector is missing its ${requiredCopy} explanation.`);
   }
@@ -259,18 +321,21 @@ function validatePropertyInspector(propertyInspectorPath) {
   }
   check(script.includes('value === "approve"') && script.includes('value === "decline"'),
     "Property inspector must identify both protected approval roles.");
+  check(script.includes('role("voice-toggle"'),
+    "Property inspector must offer the toggle voice key role.");
   for (const role of ["model", "reasoning", "speed", "approval"]) {
     check(script.includes(`role("${role}"`),
       `Property inspector must offer the ${role} encoder role.`);
   }
   for (const explanation of [
-    "80ミリ秒後に自動適用", "音声入力を開始／もう一度押して文字起こし・送信",
-    "Access候補を選ぶ（停止80ミリ秒後に次のターンへ自動適用）",
-    "現在設定を再読込", "既定値へ戻して適用",
-    "次のターン", "新規タスクの既定値", "Codexの再起動",
-    "通常成功時は選択中の値のまま", "X/Nが一部または全部の同期失敗",
-    "Fullも回転停止後80ミリ秒で適用します",
-    "Customだけはconfig.tomlを変更せず"
+    "automatically applies 80 ms after rotation stops",
+    "Start dictation / press again to transcribe and send",
+    "Choose an Access mode (auto-applies to the next turn after 80 ms)",
+    "Reload current settings", "Reset to",
+    "next turn", "new-task default", "does not need to restart",
+    "successful update keeps the selected value visible",
+    "X/N means some or all task syncs failed",
+    "including Full", "Only Custom leaves config.toml unchanged"
   ]) {
     check(script.includes(explanation),
       `Property inspector must explain the ${explanation} encoder gesture.`);
@@ -314,7 +379,8 @@ function validateProfileArchive(archivePath, pluginVersion) {
   const root = parseZipJson(zip, rootManifestName, "profile root manifest");
 
   check(root.Version === "3.0", "Bundled profile must use the V3 profile format.");
-  check(root.Name === "Codex Micro Deck", "Bundled profile name must be Codex Micro Deck.");
+  check(root.Name === "Codex Shortcuts Plugin",
+    "Bundled profile name must be Codex Shortcuts Plugin.");
   check(root.Device?.Model === DEVICE_MODEL, `Bundled profile must target device model ${DEVICE_MODEL}.`);
   check(root.Device?.UUID === "", "Bundled profile must not be bound to one physical device.");
   check(Array.isArray(root.Pages?.Pages) && root.Pages.Pages.length === 1,
@@ -437,12 +503,12 @@ function findEndOfCentralDirectory(data) {
 try {
   if (process.argv.includes("--ui-only")) {
     validatePropertyInspectorOnly();
-    console.log(`Codex Micro Deck UI validation passed (${checkCount} checks).`);
+    console.log(`Codex Shortcuts Plugin UI validation passed (${checkCount} checks).`);
   } else {
     validatePackageAndManifest();
-    console.log(`Codex Micro Deck validation passed (${checkCount} checks).`);
+    console.log(`Codex Shortcuts Plugin validation passed (${checkCount} checks).`);
   }
 } catch (error) {
-  console.error(`Codex Micro Deck validation failed: ${error instanceof Error ? error.message : String(error)}`);
+  console.error(`Codex Shortcuts Plugin validation failed: ${error instanceof Error ? error.message : String(error)}`);
   process.exitCode = 1;
 }

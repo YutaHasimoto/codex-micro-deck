@@ -1,4 +1,4 @@
-export const PLUGIN_UUID = "com.local.codexmicrodeck";
+export const PLUGIN_UUID = "works.kawaii.codex-shortcuts-plugin";
 export const KEY_ACTION_UUID = `${PLUGIN_UUID}.key`;
 export const ENCODER_ACTION_UUID = `${PLUGIN_UUID}.encoder`;
 
@@ -8,7 +8,7 @@ export type AgentKeyRole =
 
 export type KeyRole = AgentKeyRole
   | "approve" | "decline" | "fast" | "submit" | "new-chat" | "fork"
-  | "ptt" | "interrupt" | "review" | "skills" | "open-codex" | "refresh";
+  | "ptt" | "voice-toggle" | "interrupt" | "review" | "skills" | "open-codex" | "refresh";
 
 export type EncoderRole =
   | "model" | "reasoning" | "speed" | "approval"

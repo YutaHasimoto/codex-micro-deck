@@ -88,6 +88,45 @@ test("a legacy state database without name never promotes title or preview into 
   assert.equal(thread?.title, "Untitled");
 });
 
+test("a blank current name falls back to a trimmed short single-line title", async () => {
+  const { home, codex } = makeHome();
+  const rollout = path.join(codex, "short-title.jsonl");
+  const stateDb = path.join(codex, "state_5.sqlite");
+  writeFileSync(rollout, record("task_complete"));
+  createStateDb(stateDb, rollout, rollout);
+  execFileSync("/usr/bin/sqlite3", [stateDb, `
+    UPDATE threads
+    SET name = '', title = '  履歴追加版をリリース  '
+    WHERE id = 'user-thread';
+  `]);
+
+  const [thread] = await new LocalCodexStateProvider(home).listRecentThreads();
+  assert.equal(thread?.title, "履歴追加版をリリース");
+});
+
+test("long or multiline current titles remain Untitled when name is blank", async () => {
+  const { home, codex } = makeHome();
+  const rollout = path.join(codex, "unsafe-title.jsonl");
+  const stateDb = path.join(codex, "state_5.sqlite");
+  writeFileSync(rollout, record("task_complete"));
+  createStateDb(stateDb, rollout, rollout);
+  execFileSync("/usr/bin/sqlite3", [stateDb, `
+    UPDATE threads
+    SET name = '', title = '${"a".repeat(19)}'
+    WHERE id = 'user-thread';
+  `]);
+
+  const provider = new LocalCodexStateProvider(home);
+  assert.equal((await provider.listRecentThreads())[0]?.title, "Untitled");
+
+  execFileSync("/usr/bin/sqlite3", [stateDb, `
+    UPDATE threads
+    SET title = '短い' || char(10) || '複数行'
+    WHERE id = 'user-thread';
+  `]);
+  assert.equal((await provider.listRecentThreads())[0]?.title, "Untitled");
+});
+
 test("only vscode/user threads are assigned and a deep task_started remains blue", async () => {
   const { home, codex } = makeHome();
   const userRollout = path.join(codex, "user.jsonl");

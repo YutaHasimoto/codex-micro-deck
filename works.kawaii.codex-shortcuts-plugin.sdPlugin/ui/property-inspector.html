@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Codex Shortcuts Plugin</title>
+    <link rel="stylesheet" href="property-inspector.css" />
+  </head>
+  <body>
+    <main>
+      <header class="inspector-header">
+        <div>
+          <p id="action-kind" class="eyebrow">CODEX SHORTCUTS PLUGIN</p>
+          <h1 id="action-heading">Configure Control</h1>
+        </div>
+        <span id="save-state" class="save-status" aria-live="polite">Initializing</span>
+      </header>
+
+      <section class="card primary-card">
+        <p class="section-lead">Choose a role to see its controls below.</p>
+
+        <label class="field">
+          <span>Role</span>
+          <select id="role"></select>
+        </label>
+
+        <div id="role-guide" class="role-guide" aria-live="polite">
+          <p id="role-summary" class="role-summary"></p>
+          <div id="role-operations" class="operation-list"></div>
+        </div>
+
+        <aside id="approval-guard" class="notice safety" hidden>
+          <div>
+            <strong>Prevents accidental actions</strong>
+            <p>This key does nothing unless a task has an actionable approval request.</p>
+          </div>
+        </aside>
+
+        <div id="agent-options" class="subsection" hidden>
+          <h2>Task Assignment</h2>
+          <label class="check-row">
+            <input id="auto-assign" type="checkbox" checked />
+            <span>Automatically assign recent tasks</span>
+          </label>
+          <p class="help compact-help">Assigns the most recently used tasks to Agent 1–6 in order.</p>
+          <div id="fixed-thread-options" hidden>
+            <label class="field stacked-field" for="thread-id">
+              <span>Pinned Task ID</span>
+              <input id="thread-id" type="text" spellcheck="false" autocomplete="off" placeholder="019f…" />
+            </label>
+            <p id="thread-id-help" class="field-message">Paste the ID from the end of the Codex task URL.</p>
+          </div>
+        </div>
+
+        <details id="shortcut-options" class="advanced-options">
+          <summary>Customize Shortcuts</summary>
+          <p class="help no-indent">Leave blank to use the default action. Example: <code>cmd+shift+r</code></p>
+          <label class="field key-shortcut">
+            <span>Run</span>
+            <input id="shortcut" type="text" spellcheck="false" autocomplete="off" placeholder="Default action" />
+          </label>
+          <div class="encoder-shortcuts" hidden>
+            <label class="field"><span>Rotate Left</span><input id="shortcut-left" type="text" spellcheck="false" autocomplete="off" placeholder="Default action" /></label>
+            <label class="field"><span>Rotate Right</span><input id="shortcut-right" type="text" spellcheck="false" autocomplete="off" placeholder="Default action" /></label>
+            <label id="press-shortcut-field" class="field"><span>Press</span><input id="shortcut-press" type="text" spellcheck="false" autocomplete="off" placeholder="Default action" /></label>
+          </div>
+          <p id="shortcut-message" class="field-message">Supported keys: A–Z, numbers, arrows, Enter, and Escape</p>
+        </details>
+      </section>
+
+      <section class="card">
+        <h2>Shared Settings</h2>
+        <label class="check-row setting-toggle">
+          <input id="accessibility-enabled" type="checkbox" checked aria-describedby="accessibility-help" />
+          <span>Enable screen and keyboard control for Codex</span>
+        </label>
+        <p id="accessibility-help" class="help compact-help">Status display, opening Agent tasks, rotating settings dials, and touch controls remain available when this is off. Pressing a dial will not start dictation.</p>
+
+        <label class="field">
+          <span>Status Refresh</span>
+          <select id="poll-interval">
+            <option value="1000">Every second</option>
+            <option value="2000">Every 2 seconds</option>
+            <option value="5000">Every 5 seconds</option>
+            <option value="10000">Every 10 seconds</option>
+            <option value="30000">Every 30 seconds</option>
+          </select>
+        </label>
+
+        <aside id="permission-note" class="notice permission">
+          <div>
+            <strong>macOS permission is required the first time you enable this</strong>
+            <p>Allow Stream Deck in System Settings → Privacy &amp; Security → Accessibility.</p>
+          </div>
+        </aside>
+      </section>
+
+      <p id="connection-state" class="connection" aria-live="polite">
+        <span class="connection-text">Connecting to Stream Deck…</span>
+      </p>
+    </main>
+    <script src="property-inspector.js"></script>
+  </body>
+</html>

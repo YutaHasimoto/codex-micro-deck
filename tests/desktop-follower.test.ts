@@ -33,13 +33,13 @@ test("follower registers desired conversations and parses snapshot requests", as
       conversationState: {
         requests: [
           { id: "req-tool", method: "item/tool/call", params: {} },
-          { id: "req-cmd", method: "item/commandExecution/requestApproval", params: {} }
+          { id: 26, method: "item/commandExecution/requestApproval", params: {} }
         ]
       }
     }));
     await until(() => follower.pendingApprovals().get(CONV)?.length === 1);
     assert.deepEqual(follower.pendingApprovals().get(CONV), [{
-      requestId: "req-cmd",
+      requestId: 26,
       kind: "command",
       method: "item/commandExecution/requestApproval"
     }]);
@@ -152,7 +152,7 @@ test("a decided request keeps patch indices aligned for the remaining approvals"
       revision: 1,
       conversationState: {
         requests: [
-          { id: "req-cmd", method: "item/commandExecution/requestApproval", params: {} },
+          { id: 26, method: "item/commandExecution/requestApproval", params: {} },
           { id: "req-file", method: "item/fileChange/requestApproval", params: {} }
         ]
       }
@@ -208,14 +208,51 @@ test("decideApproval sends the command decision and clears the request optimisti
       type: "snapshot",
       revision: 1,
       conversationState: {
-        requests: [{ id: "req-cmd", method: "item/commandExecution/requestApproval", params: {} }]
+        requests: [{ id: 26, method: "item/commandExecution/requestApproval", params: {} }]
       }
     }));
     await until(() => follower.pendingApprovals().has(CONV));
     const approval = follower.pendingApprovals().get(CONV)?.[0];
     assert.ok(approval);
     await follower.decideApproval(CONV, approval, "accept");
-    assert.deepEqual(decisions, [{ conversationId: CONV, requestId: "req-cmd", decision: "accept" }]);
+    assert.deepEqual(decisions, [{ conversationId: CONV, requestId: 26, decision: "accept" }]);
+    assert.equal(follower.pendingApprovals().has(CONV), false);
+  } finally {
+    follower.stop();
+  }
+});
+
+test("decideApproval preserves a numeric request id for a file decline", async () => {
+  const decisions: Message[] = [];
+  const harness = createHarness((message, send) => {
+    if (message.type === "request" && message.method === "thread-follower-file-approval-decision") {
+      decisions.push(params(message) ?? {});
+      send({
+        type: "response",
+        requestId: message.requestId,
+        resultType: "success",
+        method: message.method,
+        result: { ok: true }
+      });
+    }
+  });
+  const follower = harness.follower();
+  try {
+    follower.setDesiredConversations([CONV]);
+    follower.start();
+    await until(() => harness.sent.some((message) => message.method === "thread-stream-following-changed"));
+    harness.send(stateChanged(CONV, {
+      type: "snapshot",
+      revision: 1,
+      conversationState: {
+        requests: [{ id: 71, method: "item/fileChange/requestApproval", params: {} }]
+      }
+    }));
+    await until(() => follower.pendingApprovals().has(CONV));
+    const approval = follower.pendingApprovals().get(CONV)?.[0];
+    assert.ok(approval);
+    await follower.decideApproval(CONV, approval, "decline");
+    assert.deepEqual(decisions, [{ conversationId: CONV, requestId: 71, decision: "decline" }]);
     assert.equal(follower.pendingApprovals().has(CONV), false);
   } finally {
     follower.stop();
@@ -351,6 +388,19 @@ test("parseRequests and applyRequestsPatches handle deep and length patches", ()
   ]);
   assert.equal(unrelated.touched, false);
   assert.equal(unrelated.supported, true);
+
+  assert.deepEqual(parseRequests([
+    { id: 71, method: "item/fileChange/requestApproval" }
+  ]), [{
+    requestId: 71,
+    kind: "file",
+    method: "item/fileChange/requestApproval"
+  }]);
+  assert.deepEqual(parseRequests([
+    { id: "", method: "item/commandExecution/requestApproval" },
+    { id: 1.5, method: "item/commandExecution/requestApproval" },
+    { id: Number.MAX_SAFE_INTEGER + 1, method: "item/commandExecution/requestApproval" }
+  ]), []);
 });
 
 function params(message: Message): Record<string, unknown> | undefined {

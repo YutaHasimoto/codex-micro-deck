@@ -31,7 +31,7 @@ test("default Stream Deck + coordinates cover all eight keys and four encoders",
   ];
   assert.deepEqual(keys, [
     "agent-1", "agent-2", "agent-3", "agent-4",
-    "agent-5", "agent-6", "approve", "decline"
+    "agent-5", "agent-6", "approve", "voice-toggle"
   ]);
   assert.deepEqual([0, 1, 2, 3].map((column) => encoderRole({}, { column, row: 0 })), [
     "model", "reasoning", "speed", "approval"
@@ -89,6 +89,22 @@ test("agent presentations prefer the exact App Server task name over SQLite prev
     "start:/Applications/ChatGPT.app/Contents/Resources/codex:true",
     "poll",
   ]);
+});
+
+test("an App Server blank name never overwrites a valid local task label", async () => {
+  const names = fakeThreadNames([
+    { ...snapshot("1", "Untitled", "idle") }
+  ]);
+  const { coordinator } = fixture([
+    snapshot("1", "Saved local task name", "idle")
+  ], { threadNames: names });
+
+  await coordinator.poll();
+
+  assert.equal(
+    coordinator.keyPresentation({}, { column: 0, row: 0 }).secondary,
+    "Saved local task name"
+  );
 });
 
 test("a failed App Server name poll leaves the safe local task label intact", async () => {
@@ -1016,7 +1032,7 @@ test("focused dial down toggles Codex dictation once per physical press and up o
   assert.deepEqual(calls, ["dictation:start", "dictation:stop:send"]);
 });
 
-test("a second dial press during AX start queues send instead of racing the state", async () => {
+test("a second dial press during AX start is ignored instead of being queued", async () => {
   const base = fixture([]).codexController;
   const calls: string[] = [];
   let announceStarted: (() => void) | undefined;
@@ -1040,17 +1056,34 @@ test("a second dial press during AX start queues send instead of racing the stat
 
   const first = coordinator.dialDown({}, { column: 0, row: 0 }, "model-dial");
   await started;
-  const second = coordinator.dialDown({}, { column: 2, row: 0 }, "speed-dial");
-  await Promise.resolve();
+  assert.equal(
+    await coordinator.pressKey(
+      { role: "voice-toggle" },
+      { column: 3, row: 1 },
+      "voice-key"
+    ),
+    "ignored"
+  );
+  await coordinator.releaseKey(
+    { role: "voice-toggle" },
+    { column: 3, row: 1 },
+    "voice-key"
+  );
+  assert.equal(
+    await coordinator.dialDown({}, { column: 2, row: 0 }, "speed-dial"),
+    "ignored"
+  );
+  await coordinator.dialUp({}, { column: 2, row: 0 }, "speed-dial");
   assert.deepEqual(calls, ["start"]);
 
   releaseStart?.();
-  assert.deepEqual(await Promise.all([first, second]), ["started", "sent"]);
-  assert.deepEqual(calls, ["start", "stop:send"]);
-  assert.equal(coordinator.voiceActive, false);
+  assert.equal(await first, "started");
+  await coordinator.dialUp({}, { column: 0, row: 0 }, "model-dial");
+  assert.deepEqual(calls, ["start"]);
+  assert.equal(coordinator.voiceActive, true);
 });
 
-test("a failed Transcribe and send AX press keeps voice active and the waveform visible", async () => {
+test("a failed Transcribe and send AX press clears voice state instead of sticking", async () => {
   const base = fixture([]).codexController;
   const calls: string[] = [];
   const coordinator = new CodexDeckCoordinator({
@@ -1065,39 +1098,39 @@ test("a failed Transcribe and send AX press keeps voice active and the waveform 
     }
   });
   const coordinates = { column: 1, row: 0 };
+  let notifications = 0;
+  coordinator.onChange(() => { notifications += 1; });
 
   await coordinator.dialDown({}, coordinates, "reasoning-dial");
   await coordinator.dialUp({}, coordinates, "reasoning-dial");
+  const notificationsBeforeFailure = notifications;
   await assert.rejects(
     () => coordinator.dialDown({}, coordinates, "reasoning-dial"),
     /send button unavailable/
   );
 
-  assert.equal(coordinator.voiceActive, true);
-  assert.equal(coordinator.encoderPresentation({}, coordinates).mode, "voice");
+  assert.equal(coordinator.voiceActive, false);
+  assert.equal(coordinator.encoderPresentation({}, coordinates).mode, undefined);
+  assert.equal(notifications, notificationsBeforeFailure + 1);
   assert.deepEqual(calls, ["start", "stop:send"]);
   await coordinator.dialUp({}, coordinates, "reasoning-dial");
 });
 
-test("three rapid physical presses serialize as start then send then start", async () => {
+test("five rapid physical presses execute only the first voice toggle action", async () => {
   const base = fixture([]).codexController;
   const calls: string[] = [];
   let announceFirstStart: (() => void) | undefined;
   const firstStarted = new Promise<void>((resolve) => { announceFirstStart = resolve; });
   let releaseFirstStart: (() => void) | undefined;
   const firstStartPending = new Promise<void>((resolve) => { releaseFirstStart = resolve; });
-  let starts = 0;
   const coordinator = new CodexDeckCoordinator({
     provider: { async listRecentThreads() { return []; } },
     codex: {
       ...base,
       async startDictation(): Promise<void> {
-        starts += 1;
         calls.push("start");
-        if (starts === 1) {
-          announceFirstStart?.();
-          await firstStartPending;
-        }
+        announceFirstStart?.();
+        await firstStartPending;
       },
       async stopDictation(disposition: DictationDisposition): Promise<void> {
         calls.push(`stop:${disposition}`);
@@ -1110,17 +1143,16 @@ test("three rapid physical presses serialize as start then send then start", asy
   const first = coordinator.dialDown({}, coordinates, actionId);
   await firstStarted;
   await coordinator.dialUp({}, coordinates, actionId);
-  const second = coordinator.dialDown({}, coordinates, actionId);
-  await coordinator.dialUp({}, coordinates, actionId);
-  const third = coordinator.dialDown({}, coordinates, actionId);
-  await coordinator.dialUp({}, coordinates, actionId);
+  const results: Array<string | void> = [];
+  for (let press = 1; press < 5; press += 1) {
+    results.push(await coordinator.dialDown({}, coordinates, actionId));
+    await coordinator.dialUp({}, coordinates, actionId);
+  }
   releaseFirstStart?.();
 
-  assert.deepEqual(
-    await Promise.all([first, second, third]),
-    ["started", "sent", "started"]
-  );
-  assert.deepEqual(calls, ["start", "stop:send", "start"]);
+  assert.equal(await first, "started");
+  assert.deepEqual(results, ["ignored", "ignored", "ignored", "ignored"]);
+  assert.deepEqual(calls, ["start"]);
   assert.equal(coordinator.voiceActive, true);
 });
 
@@ -1144,6 +1176,50 @@ test("voice mode blocks every dial rotation before custom shortcuts or config ca
   await coordinator.dialDown({}, model, "model-dial");
   await coordinator.dialUp({}, model, "model-dial");
   assert.equal(coordinator.encoderPresentation({}, model).value, before);
+});
+
+test("voice mode ignores every non-toggle key action before it can reach Codex", async () => {
+  const { coordinator, calls } = fixture([]);
+  const model = { column: 0, row: 0 };
+
+  await coordinator.dialDown({}, model, "model-dial");
+  await coordinator.dialUp({}, model, "model-dial");
+
+  const blockedPresses = [
+    coordinator.pressKey(
+      { role: "submit", shortcut: "cmd+return" },
+      { column: 0, row: 1 },
+      "shortcut-key"
+    ),
+    coordinator.pressKey({ role: "interrupt" }, { column: 1, row: 1 }, "interrupt-key"),
+    coordinator.pressKey({ role: "submit" }, { column: 2, row: 1 }, "submit-key"),
+    coordinator.pressKey({ role: "fork" }, { column: 3, row: 1 }, "fork-key"),
+    coordinator.pressKey({ role: "approve" }, { column: 0, row: 1 }, "approve-key"),
+    coordinator.pressKey({ role: "decline" }, { column: 1, row: 1 }, "decline-key"),
+    coordinator.pressKey({ role: "agent-1" }, { column: 2, row: 1 }, "agent-key"),
+    coordinator.pressKey({ role: "ptt" }, { column: 3, row: 1 }, "ptt-key")
+  ];
+
+  assert.deepEqual(
+    await Promise.all(blockedPresses),
+    Array.from({ length: blockedPresses.length }, () => "ignored")
+  );
+  assert.deepEqual(calls, ["dictation:start"]);
+
+  assert.equal(
+    await coordinator.pressKey(
+      { role: "voice-toggle", shortcut: "cmd+return" },
+      { column: 3, row: 1 },
+      "voice-key"
+    ),
+    "sent"
+  );
+  await coordinator.releaseKey(
+    { role: "voice-toggle", shortcut: "cmd+return" },
+    { column: 3, row: 1 },
+    "voice-key"
+  );
+  assert.deepEqual(calls, ["dictation:start", "dictation:stop:send"]);
 });
 
 test("failed focused-dial AX actions fail closed without inventing voice state or sending text", async () => {
@@ -1178,13 +1254,196 @@ test("legacy PTT key still starts on down and stops with insert on release", asy
   const settings = { role: "ptt" as const };
 
   await coordinator.pressKey(settings, coordinates);
-  await coordinator.pressKey(settings, coordinates);
+  assert.equal(await coordinator.pressKey(settings, coordinates), "ignored");
+  assert.equal(
+    await coordinator.pressKey(settings, { column: 1, row: 0 }),
+    "ignored"
+  );
   assert.equal(coordinator.voiceActive, true);
   await coordinator.releaseKey(settings, coordinates);
   await coordinator.releaseKey(settings, coordinates);
 
   assert.equal(coordinator.voiceActive, false);
   assert.deepEqual(calls, ["dictation:start", "dictation:stop:insert"]);
+});
+
+test("a failed legacy insert stop clears its owner and active state", async () => {
+  const base = fixture([]).codexController;
+  const calls: string[] = [];
+  const coordinator = new CodexDeckCoordinator({
+    provider: { async listRecentThreads() { return []; } },
+    codex: {
+      ...base,
+      async startDictation(): Promise<void> { calls.push("start"); },
+      async stopDictation(disposition: DictationDisposition): Promise<void> {
+        calls.push(`stop:${disposition}`);
+        throw new Error("insert button unavailable");
+      }
+    }
+  });
+  const coordinates = { column: 0, row: 0 };
+  const settings = { role: "ptt" as const };
+  let notifications = 0;
+  coordinator.onChange(() => { notifications += 1; });
+
+  await coordinator.pressKey(settings, coordinates);
+  const notificationsBeforeFailure = notifications;
+  await assert.rejects(
+    () => coordinator.releaseKey(settings, coordinates),
+    /insert button unavailable/
+  );
+
+  assert.equal(coordinator.voiceActive, false);
+  assert.equal(notifications, notificationsBeforeFailure + 1);
+  assert.deepEqual(calls, ["start", "stop:insert"]);
+  await coordinator.pressKey(settings, coordinates);
+  assert.equal(coordinator.voiceActive, true);
+});
+
+test("voice mode makes every encoder touch gesture a no-op", async () => {
+  const { coordinator, calls, configCalls } = fixture([]);
+  const model = { column: 0, row: 0 };
+
+  await coordinator.dialDown({}, model, "model-dial");
+  await coordinator.dialUp({}, model, "model-dial");
+  await coordinator.touchEncoder({}, model, false);
+  await coordinator.touchEncoder({}, model, true);
+  await coordinator.touchEncoder({ role: "composer" }, { column: 1, row: 0 }, false);
+  await coordinator.touchEncoder({ role: "composer" }, { column: 1, row: 0 }, true);
+  await coordinator.touchEncoder({ role: "navigation" }, { column: 2, row: 0 }, false);
+  await coordinator.touchEncoder({ role: "navigation" }, { column: 2, row: 0 }, true);
+
+  assert.deepEqual(calls, ["dictation:start"]);
+  assert.deepEqual(configCalls, []);
+});
+
+test("stop clears local voice state and physical press owners", async () => {
+  const { coordinator, calls } = fixture([]);
+  const coordinates = { column: 3, row: 1 };
+  const settings = { role: "voice-toggle" as const };
+
+  assert.equal(await coordinator.pressKey(settings, coordinates, "voice-key"), "started");
+  coordinator.stop();
+  assert.equal(coordinator.voiceActive, false);
+  assert.equal(await coordinator.pressKey(settings, coordinates, "voice-key"), "started");
+
+  assert.deepEqual(calls, ["dictation:start", "dictation:start"]);
+});
+
+test("voice toggle key starts once per physical press and sends on the next press", async () => {
+  const { coordinator, calls } = fixture([]);
+  const coordinates = { column: 3, row: 1 };
+  const settings = { role: "voice-toggle" as const };
+  const actionId = "voice-key";
+
+  assert.equal(
+    await coordinator.pressKey(settings, coordinates, actionId),
+    "started"
+  );
+  assert.equal(
+    await coordinator.pressKey(settings, coordinates, actionId),
+    "ignored"
+  );
+  assert.equal(coordinator.voiceActive, true);
+  assert.deepEqual(coordinator.keyPresentation(settings, coordinates), {
+    color: "blue",
+    primary: "Voice",
+    secondary: "Listening…"
+  });
+
+  await coordinator.releaseKey(settings, coordinates, actionId);
+  assert.equal(coordinator.voiceActive, true);
+  assert.equal(
+    await coordinator.pressKey(settings, coordinates, actionId),
+    "sent"
+  );
+  assert.equal(
+    await coordinator.pressKey(settings, coordinates, actionId),
+    "ignored"
+  );
+  await coordinator.releaseKey(settings, coordinates, actionId);
+
+  assert.equal(coordinator.voiceActive, false);
+  assert.deepEqual(coordinator.keyPresentation(settings, coordinates), {
+    color: "white",
+    primary: "Voice",
+    secondary: "Tap to talk"
+  });
+  assert.deepEqual(calls, ["dictation:start", "dictation:stop:send"]);
+});
+
+test("explicit dictation tokens distinguish state sync from a performed action", async () => {
+  const base = fixture([]).codexController;
+  const calls: string[] = [];
+  const coordinator = new CodexDeckCoordinator({
+    provider: { async listRecentThreads() { return []; } },
+    codex: {
+      ...base,
+      async startDictation() {
+        calls.push("start:already-active");
+        return "already-active" as const;
+      },
+      async stopDictation(disposition: DictationDisposition) {
+        calls.push(`stop:${disposition}:already-idle`);
+        return "already-idle" as const;
+      }
+    }
+  });
+  const coordinates = { column: 3, row: 1 };
+  const settings = { role: "voice-toggle" as const };
+
+  assert.equal(
+    await coordinator.pressKey(settings, coordinates, "voice-key"),
+    "synced"
+  );
+  assert.equal(coordinator.voiceActive, true);
+  await coordinator.releaseKey(settings, coordinates, "voice-key");
+
+  assert.equal(
+    await coordinator.pressKey(settings, coordinates, "voice-key"),
+    "already-idle"
+  );
+  assert.equal(coordinator.voiceActive, false);
+  await coordinator.releaseKey(settings, coordinates, "voice-key");
+
+  assert.deepEqual(calls, [
+    "start:already-active",
+    "stop:send:already-idle"
+  ]);
+});
+
+test("failed voice toggle key send clears the listening state", async () => {
+  const base = fixture([]).codexController;
+  const calls: string[] = [];
+  const coordinator = new CodexDeckCoordinator({
+    provider: { async listRecentThreads() { return []; } },
+    codex: {
+      ...base,
+      async startDictation(): Promise<void> { calls.push("start"); },
+      async stopDictation(disposition: DictationDisposition): Promise<void> {
+        calls.push(`stop:${disposition}`);
+        throw new Error("send button unavailable");
+      }
+    }
+  });
+  const coordinates = { column: 3, row: 1 };
+  const settings = { role: "voice-toggle" as const };
+  let notifications = 0;
+  coordinator.onChange(() => { notifications += 1; });
+
+  await coordinator.pressKey(settings, coordinates, "voice-key");
+  await coordinator.releaseKey(settings, coordinates, "voice-key");
+  const notificationsBeforeFailure = notifications;
+  await assert.rejects(
+    () => coordinator.pressKey(settings, coordinates, "voice-key"),
+    /send button unavailable/
+  );
+
+  assert.equal(coordinator.voiceActive, false);
+  assert.equal(coordinator.keyPresentation(settings, coordinates).color, "white");
+  assert.equal(notifications, notificationsBeforeFailure + 1);
+  assert.deepEqual(calls, ["start", "stop:send"]);
+  await coordinator.releaseKey(settings, coordinates, "voice-key");
 });
 
 test("agent slots remain stable when task recency order changes", async () => {

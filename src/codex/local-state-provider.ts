@@ -84,9 +84,11 @@ export class LocalCodexStateProvider {
   }
 
   async #queryRows(): Promise<ThreadRow[]> {
-    // `name` was added after the first state_5 schema. Do not fall back to
-    // title/preview when it is absent: those fields are commonly the first
-    // user message and are not a trustworthy human-facing task name.
+    // `name` was added after the first state_5 schema. Without that column,
+    // never promote title/preview: those fields are commonly the first user
+    // message and are not a trustworthy human-facing task name. On the
+    // current schema only, a short single-line title (18 chars or fewer) is a
+    // deliberately narrow fallback for threads whose human name is null.
     const schema = await runProcess(
       "/usr/bin/sqlite3",
       ["-readonly", "-json", this.#stateDbPath, "PRAGMA table_info(threads);"],
@@ -96,7 +98,14 @@ export class LocalCodexStateProvider {
     const columns = JSON.parse(schema.stdout || "[]") as Array<{ name?: unknown }>;
     const hasNameColumn = columns.some((column) => column.name === "name");
     const titleExpression = hasNameColumn
-      ? "COALESCE(NULLIF(name, ''), 'Untitled')"
+      ? `CASE
+           WHEN NULLIF(trim(name), '') IS NOT NULL THEN trim(name)
+           WHEN length(trim(title)) BETWEEN 1 AND 18
+             AND instr(title, char(10)) = 0
+             AND instr(title, char(13)) = 0
+             THEN trim(title)
+           ELSE 'Untitled'
+         END`
       : "'Untitled'";
     const query = `
 SELECT

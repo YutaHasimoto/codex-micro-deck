@@ -1,4 +1,4 @@
-# Codex Micro Deck v0.3.0 リリースノート
+# Codex Shortcuts Plugin v0.3.0 リリースノート
 
 リリース日: 2026年7月21日
 
@@ -69,7 +69,7 @@ Property Inspectorの「Codexへのキー操作を有効にする」は、macOS�
 
 ## 更新後の確認
 
-1. Stream Deckアプリで「Codex Micro Deck」プロファイルを選びます。
+1. Stream Deckアプリで「Codex Shortcuts Plugin」プロファイルを選びます。
 2. タッチ領域が左からModel、Reasoning、Speed、Approvalの順になっていることを確認します。
 3. ダイヤルを回し、表示だけが候補へ変わることを確認します。
 4. ダイヤルを押し、選択値が適用されることを確認します。

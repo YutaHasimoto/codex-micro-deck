@@ -30,29 +30,39 @@ type MarqueeTarget = {
   coordinates: DeckCoordinates;
 };
 
+type MarqueeState = {
+  threadId: string;
+  title: string;
+  startedAt: number;
+};
+
 @action({ UUID: KEY_ACTION_UUID })
 export class CodexKeyAction extends SingletonAction<KeySettings> {
   readonly #slotLifecycle: KeySlotLifecycle;
   #refreshQueued = false;
   #refreshPromise: Promise<void> | undefined;
-  #marqueeTarget: MarqueeTarget | undefined;
+  readonly #marqueeTargets = new Map<string, MarqueeTarget>();
+  readonly #marqueeStates = new Map<string, MarqueeState>();
   #marqueeRefreshInFlight = false;
   #marqueeClock = 0;
-  #selectedMarqueeThreadId: string | undefined;
-  #selectedMarqueeStartedAt = 0;
 
   constructor(readonly coordinator: CodexDeckCoordinator) {
     super();
     this.#slotLifecycle = new KeySlotLifecycle(coordinator);
     coordinator.onChange(() => this.refreshVisible());
     const marqueeTimer = setInterval(() => {
-      const target = this.#marqueeTarget;
-      if (!target || this.#marqueeRefreshInFlight) return;
+      const targets = [...this.#marqueeTargets.values()];
+      if (!targets.length || this.#marqueeRefreshInFlight) return;
       this.#marqueeClock += 1;
       this.#marqueeRefreshInFlight = true;
-      void this.#renderMarqueeFrame(target)
-        .catch((error) => {
-          this.#logFailure("marquee", target.settings, target.coordinates, error);
+      void Promise.allSettled(targets.map((target) => this.#renderMarqueeFrame(target)))
+        .then((results) => {
+          results.forEach((result, index) => {
+            if (result.status === "rejected") {
+              const target = targets[index];
+              if (target) this.#logFailure("marquee", target.settings, target.coordinates, result.reason);
+            }
+          });
         })
         .finally(() => {
           this.#marqueeRefreshInFlight = false;
@@ -91,16 +101,26 @@ export class CodexKeyAction extends SingletonAction<KeySettings> {
 
   override onWillDisappear(event: WillDisappearEvent<KeySettings>): void {
     this.#slotLifecycle.remove(event.action.id);
-    if (this.#marqueeTarget?.action.id === event.action.id) {
-      this.#clearMarqueeTarget();
+    this.#clearMarqueeTarget(event.action.id);
+    if (!("coordinates" in event.payload)) {
+      this.coordinator.releaseVoiceToggleKey(event.action.id);
+      return;
     }
+    const coordinates = event.payload.coordinates;
+    void this.coordinator.releaseKey(
+      event.payload.settings,
+      coordinates,
+      event.action.id
+    ).catch((error) => {
+      this.#logFailure("disappear", event.payload.settings, coordinates, error);
+    });
   }
 
   override async onKeyDown(event: KeyDownEvent<KeySettings>): Promise<void> {
     const coordinates = event.action.coordinates;
     if (!coordinates) return;
     try {
-      await this.coordinator.pressKey(event.payload.settings, coordinates);
+      await this.coordinator.pressKey(event.payload.settings, coordinates, event.action.id);
       await this.render(event.action, event.payload.settings, coordinates);
     } catch (error) {
       this.#logFailure("down", event.payload.settings, coordinates, error);
@@ -112,8 +132,9 @@ export class CodexKeyAction extends SingletonAction<KeySettings> {
     const coordinates = event.action.coordinates;
     if (!coordinates) return;
     try {
-      await this.coordinator.releaseKey(event.payload.settings, coordinates);
-      if (keyRole(event.payload.settings, coordinates) === "ptt") {
+      await this.coordinator.releaseKey(event.payload.settings, coordinates, event.action.id);
+      if (keyRole(event.payload.settings, coordinates) === "ptt"
+        || keyRole(event.payload.settings, coordinates) === "voice-toggle") {
         await this.render(event.action, event.payload.settings, coordinates);
       }
     } catch (error) {
@@ -173,16 +194,19 @@ export class CodexKeyAction extends SingletonAction<KeySettings> {
       coordinates,
       actionInstance.id
     );
-    const isSelectedMarquee = presentation.selected === true
+    const isMarquee = presentation.threadId !== undefined
       && taskTitleNeedsMarquee(presentation.secondary);
-    if (isSelectedMarquee) {
-      this.#marqueeTarget = { action: actionInstance, settings, coordinates };
-    } else if (this.#marqueeTarget?.action.id === actionInstance.id) {
-      this.#clearMarqueeTarget();
+    const marqueeTarget = isMarquee
+      ? { action: actionInstance, settings, coordinates }
+      : undefined;
+    if (marqueeTarget) {
+      this.#marqueeTargets.set(actionInstance.id, marqueeTarget);
+    } else {
+      this.#clearMarqueeTarget(actionInstance.id);
     }
     await actionInstance.setImage(renderKeyImage(
       presentation,
-      this.#marqueeFrame(presentation)
+      marqueeTarget ? this.#marqueeFrame(marqueeTarget, presentation) : 0
     ));
     // A non-breaking space also clears labels inherited from v0.1 profiles.
     // Stream Deck treats empty and zero-width strings as "use the saved
@@ -192,39 +216,48 @@ export class CodexKeyAction extends SingletonAction<KeySettings> {
   }
 
   async #renderMarqueeFrame(target: MarqueeTarget): Promise<void> {
-    if (this.#marqueeTarget !== target) return;
+    if (this.#marqueeTargets.get(target.action.id) !== target) return;
     const presentation = this.coordinator.keyPresentation(
       target.settings,
       target.coordinates,
       target.action.id
     );
-    if (!presentation.selected || !taskTitleNeedsMarquee(presentation.secondary)) {
-      if (this.#marqueeTarget === target) this.#clearMarqueeTarget();
+    if (!presentation.threadId || !taskTitleNeedsMarquee(presentation.secondary)) {
+      if (this.#marqueeTargets.get(target.action.id) === target) {
+        this.#clearMarqueeTarget(target.action.id);
+      }
       return;
     }
     await target.action.setImage(renderKeyImage(
       presentation,
-      this.#marqueeFrame(presentation)
+      this.#marqueeFrame(target, presentation)
     ));
   }
 
   #marqueeFrame(
+    target: MarqueeTarget,
     presentation: ReturnType<CodexDeckCoordinator["keyPresentation"]>
   ): number {
-    if (!presentation.selected
-      || !presentation.threadId
+    if (!presentation.threadId
       || !taskTitleNeedsMarquee(presentation.secondary)) return 0;
-    if (presentation.threadId !== this.#selectedMarqueeThreadId) {
-      this.#selectedMarqueeThreadId = presentation.threadId;
-      this.#selectedMarqueeStartedAt = this.#marqueeClock;
+    const keyId = target.action.id;
+    const previous = this.#marqueeStates.get(keyId);
+    if (!previous
+      || previous.threadId !== presentation.threadId
+      || previous.title !== presentation.secondary) {
+      this.#marqueeStates.set(keyId, {
+        threadId: presentation.threadId,
+        title: presentation.secondary,
+        startedAt: this.#marqueeClock
+      });
+      return 0;
     }
-    return this.#marqueeClock - this.#selectedMarqueeStartedAt;
+    return this.#marqueeClock - previous.startedAt;
   }
 
-  #clearMarqueeTarget(): void {
-    this.#marqueeTarget = undefined;
-    this.#selectedMarqueeThreadId = undefined;
-    this.#selectedMarqueeStartedAt = this.#marqueeClock;
+  #clearMarqueeTarget(actionId: string): void {
+    this.#marqueeTargets.delete(actionId);
+    this.#marqueeStates.delete(actionId);
   }
 }
 

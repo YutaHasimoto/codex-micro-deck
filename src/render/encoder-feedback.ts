@@ -23,10 +23,11 @@ const TRANSPARENT_OVERLAY = svgDataUrl(
  */
 export function renderEncoderFeedback(
   presentation: EncoderPresentation,
-  frame = 0
+  frame = 0,
+  voiceLevel = 0
 ): FeedbackPayload {
   if (presentation.mode === "voice") {
-    return renderVoiceFeedback(presentation.slice, frame);
+    return renderVoiceFeedback(presentation.slice, frame, voiceLevel);
   }
 
   const accent = OFFICIAL_STATE_COLORS[presentation.color];
@@ -53,7 +54,11 @@ export function renderEncoderFeedback(
   };
 }
 
-function renderVoiceFeedback(slice: number | undefined, frame: number): FeedbackPayload {
+function renderVoiceFeedback(
+  slice: number | undefined,
+  frame: number,
+  voiceLevel: number
+): FeedbackPayload {
   const hiddenBar = {
     value: 100,
     bar_bg_c: VOICE_BACKGROUND,
@@ -65,16 +70,24 @@ function renderVoiceFeedback(slice: number | undefined, frame: number): Feedback
     accent: { ...hiddenBar },
     icon: TRANSPARENT_OVERLAY,
     value: "",
-    waveform: voiceWaveformDataUrl(slice, frame)
+    waveform: voiceWaveformDataUrl(slice, frame, voiceLevel)
   };
 }
 
-function voiceWaveformDataUrl(slice: number | undefined, frame: number): string {
+function voiceWaveformDataUrl(
+  slice: number | undefined,
+  frame: number,
+  voiceLevel: number
+): string {
   const numericSlice = slice !== undefined && Number.isFinite(slice) ? Math.trunc(slice) : 0;
   const safeSlice = Math.max(0, Math.min(ENCODER_COUNT - 1, numericSlice));
   const safeFrame = Number.isFinite(frame) ? Math.max(0, Math.trunc(frame)) : 0;
+  const safeVoiceLevel = Number.isFinite(voiceLevel)
+    ? Math.max(0, Math.min(1, voiceLevel))
+    : 0;
   const sliceX = safeSlice * ENCODER_WIDTH;
   const phase = safeFrame * 0.46;
+  const amplitude = 1.5 + safeVoiceLevel * 24;
   const points: string[] = [];
 
   // These points describe the complete 800 px strip. Each dial receives the
@@ -85,12 +98,12 @@ function voiceWaveformDataUrl(slice: number | undefined, frame: number): string 
       + 0.52 * Math.sin(x * 0.083 - phase * 0.74)
       + 0.24 * Math.sin(x * 0.173 + phase * 1.31);
     const envelope = 0.42 + 0.58 * (0.5 + 0.5 * Math.sin(x * 0.012 - phase * 0.19));
-    const y = 50 + carrier * 18 * envelope;
+    const y = 50 + carrier * amplitude * envelope;
     points.push(`${x},${y.toFixed(2)}`);
   }
 
   const path = `M${points.join(" L")}`;
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${ENCODER_WIDTH}" height="${ENCODER_HEIGHT}" viewBox="${sliceX} 0 ${ENCODER_WIDTH} ${ENCODER_HEIGHT}" data-overlay="voice" data-frame="${safeFrame}" data-slice="${safeSlice}">
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${ENCODER_WIDTH}" height="${ENCODER_HEIGHT}" viewBox="${sliceX} 0 ${ENCODER_WIDTH} ${ENCODER_HEIGHT}" data-overlay="voice" data-frame="${safeFrame}" data-slice="${safeSlice}" data-level="${safeVoiceLevel.toFixed(3)}">
   <defs>
     <linearGradient id="voice-wave" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="${WAVEFORM_WIDTH}" y2="0">
       <stop offset="0" stop-color="#304FFE"/>
