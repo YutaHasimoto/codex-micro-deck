@@ -8,6 +8,7 @@ import {
   assertThreadSettings,
   encodeIpcFrame,
   IpcFrameDecoder,
+  threadSettingsMatchResume,
   type CodexThreadSettingsPatch
 } from "./desktop-ipc-client.js";
 
@@ -41,6 +42,25 @@ type PendingRequest = {
   reject: (error: Error) => void;
   timer: NodeJS.Timeout;
 };
+
+type SettingsOperation = { ownerClientId?: string };
+type SettingsWaiter = {
+  ownerClientId: string;
+  afterSequence: number;
+  expected: CodexThreadSettingsPatch;
+  resolve: () => void;
+  reject: (error: Error) => void;
+  timer: NodeJS.Timeout;
+};
+
+class DesktopRequestError extends Error {
+  readonly code: string;
+
+  constructor(code: string) {
+    super(`Codex Desktop request failed (${code})`);
+    this.code = code;
+  }
+}
 
 export type CodexDesktopFollowerOptions = {
   codexRoot?: string;
@@ -98,6 +118,10 @@ export class CodexDesktopFollower {
   readonly #revisions = new Map<string, number>();
   readonly #lastSnapshotRequestAt = new Map<string, number>();
   readonly #requests = new Map<string, PendingRequest>();
+  readonly #settingsOperations = new Map<string, SettingsOperation>();
+  readonly #settingsWaiters = new Map<string, SettingsWaiter>();
+  readonly #settingsSnapshots = new Map<string, JsonRecord>();
+  #snapshotSequence = 0;
 
   constructor(options: CodexDesktopFollowerOptions = {}) {
     const environment = options.environment ?? process.env;
@@ -159,6 +183,8 @@ export class CodexDesktopFollower {
       this.#decidedLocally.delete(id);
       this.#revisions.delete(id);
       this.#lastSnapshotRequestAt.delete(id);
+      this.#settingsSnapshots.delete(id);
+      this.#cancelSettingsOperation(id, new Error("Codex task was removed during settings update"));
       if (this.#registered.delete(id)) this.#sendFollowing(id, false);
     }
     if (this.isConnected) {
@@ -214,10 +240,122 @@ export class CodexDesktopFollower {
     const response = await this.#request("thread-follower-update-thread-settings", {
       conversationId,
       threadSettings
-    });
-    if (asRecord(response.result)?.ok !== true) {
+    }, { version: 2 });
+    if (asRecord(response.result)?.applied !== true) {
       throw new Error("Codex Desktop did not confirm the task settings update");
     }
+  }
+
+  /**
+   * Updates the exact owning client, without claiming another rollout writer.
+   * False means no owner was found before submission; uncertain or rejected
+   * submissions throw so the caller cannot race a second writer as a fallback.
+   */
+  async updateThreadSettingsVerified(
+    conversationId: string,
+    threadSettings: CodexThreadSettingsPatch
+  ): Promise<boolean> {
+    assertConversationId(conversationId);
+    assertThreadSettings(threadSettings);
+    if (!this.isConnected) return false;
+    if (this.#settingsOperations.has(conversationId)) {
+      throw new Error("Codex task settings update is already in progress");
+    }
+    const operation: SettingsOperation = {};
+    this.#settingsOperations.set(conversationId, operation);
+    const temporaryFollow = !this.#desired.has(conversationId);
+    const assertCurrent = (): void => {
+      if (!this.isConnected || this.#settingsOperations.get(conversationId) !== operation) {
+        throw new Error("Codex task owner changed during settings update");
+      }
+    };
+    try {
+      let discovery: JsonRecord;
+      try {
+        discovery = await this.#request("thread-owner-discovery", {
+          hostId: "local",
+          conversationId
+        });
+      } catch (error) {
+        if (error instanceof DesktopRequestError && error.code === "no-client-found") return false;
+        throw error;
+      }
+      assertCurrent();
+      const ownerClientId = discovery.handledByClientId;
+      if (typeof ownerClientId !== "string" || !ownerClientId) {
+        throw new Error("Codex Desktop returned an invalid task owner");
+      }
+      operation.ownerClientId = ownerClientId;
+      const updated = await this.#request("thread-follower-update-thread-settings", {
+        conversationId,
+        threadSettings
+      }, { version: 2, targetClientId: ownerClientId });
+      assertCurrent();
+      assertOwnerResponse(updated, ownerClientId);
+      if (asRecord(updated.result)?.applied !== true) {
+        throw new Error("Codex Desktop did not apply the task settings update");
+      }
+      // This owner-side read waits for pending settings writes. It is a
+      // model/effort barrier, not a full resume response (resumeState is an enum).
+      const readback = await this.#request("thread-follower-read-model-settings", {
+        conversationId
+      }, { targetClientId: ownerClientId });
+      assertCurrent();
+      assertOwnerResponse(readback, ownerClientId);
+      const settings = asRecord(asRecord(readback.result)?.settings);
+      if (!settings
+        || (threadSettings.model !== undefined && settings.model !== threadSettings.model)
+        || (threadSettings.effort !== undefined && settings.reasoningEffort !== threadSettings.effort)) {
+        throw new Error("Codex Desktop model settings verification failed");
+      }
+      const snapshot = this.#waitForSettingsSnapshot(conversationId, ownerClientId, threadSettings);
+      // The owner resends a full snapshot even when its revision is unchanged.
+      // Register the waiter first so a synchronous reply cannot be missed.
+      this.#sendFollowing(conversationId, true);
+      await snapshot;
+      assertCurrent();
+      return true;
+    } finally {
+      if (this.#settingsOperations.get(conversationId) === operation) {
+        this.#settingsOperations.delete(conversationId);
+      }
+      if (temporaryFollow && !this.#desired.has(conversationId)) {
+        this.#sendFollowing(conversationId, false);
+        this.#settingsSnapshots.delete(conversationId);
+        this.#revisions.delete(conversationId);
+        this.#lastSnapshotRequestAt.delete(conversationId);
+      }
+    }
+  }
+
+  #waitForSettingsSnapshot(
+    conversationId: string,
+    ownerClientId: string,
+    expected: CodexThreadSettingsPatch
+  ): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.#settingsWaiters.delete(conversationId);
+        reject(new Error("Codex Desktop settings snapshot timed out"));
+      }, this.#requestTimeoutMs);
+      this.#settingsWaiters.set(conversationId, {
+        ownerClientId,
+        afterSequence: this.#snapshotSequence,
+        expected: structuredClone(expected),
+        resolve,
+        reject,
+        timer
+      });
+    });
+  }
+
+  #cancelSettingsOperation(conversationId: string, error: Error): void {
+    this.#settingsOperations.delete(conversationId);
+    const waiter = this.#settingsWaiters.get(conversationId);
+    if (!waiter) return;
+    clearTimeout(waiter.timer);
+    this.#settingsWaiters.delete(conversationId);
+    waiter.reject(error);
   }
 
   async #connect(): Promise<void> {
@@ -281,7 +419,7 @@ export class CodexDesktopFollower {
   #request(
     method: string,
     params: JsonRecord,
-    options: { version?: number; sourceClientId?: string } = {}
+    options: { version?: number; sourceClientId?: string; targetClientId?: string } = {}
   ): Promise<JsonRecord> {
     const socket = this.#socket;
     if (!socket) return Promise.reject(new Error("Codex Desktop IPC is unavailable"));
@@ -293,6 +431,7 @@ export class CodexDesktopFollower {
       sourceClientId: options.sourceClientId ?? this.#clientId ?? "initializing-client",
       version,
       method,
+      ...(options.targetClientId ? { targetClientId: options.targetClientId } : {}),
       ...(version >= 1 ? { timeoutMs: this.#requestTimeoutMs } : {}),
       params
     };
@@ -350,7 +489,15 @@ export class CodexDesktopFollower {
       this.#requests.delete(message.requestId);
       clearTimeout(pending.timer);
       if (message.resultType === "success") pending.resolve(message);
-      else pending.reject(new Error("Codex Desktop rejected the request"));
+      else {
+        const known = new Set([
+          "no-client-found", "request-timeout", "client-disconnected",
+          "request-version-mismatch", "no-handler-for-request"
+        ]);
+        const code = typeof message.error === "string" && known.has(message.error)
+          ? message.error : "request-rejected";
+        pending.reject(new DesktopRequestError(code));
+      }
       return;
     }
     if (message.type === "client-discovery-request" && typeof message.requestId === "string") {
@@ -377,7 +524,7 @@ export class CodexDesktopFollower {
       return;
     }
     if (message.method === "thread-stream-state-changed" && message.version === STATE_CHANGED_VERSION) {
-      this.#handleStateChanged(params);
+      this.#handleStateChanged(params, message.sourceClientId);
     }
   }
 
@@ -392,20 +539,50 @@ export class CodexDesktopFollower {
     this.#notify();
   }
 
-  #handleStateChanged(params: JsonRecord): void {
+  #handleStateChanged(params: JsonRecord, sourceClientId: unknown): void {
     const conversationId = params.conversationId;
-    if (typeof conversationId !== "string" || !this.#desired.has(conversationId)) return;
+    if (typeof conversationId !== "string"
+      || (!this.#desired.has(conversationId) && !this.#settingsOperations.has(conversationId))) return;
     const change = asRecord(params.change);
     if (!change) return;
     if (change.type === "snapshot") {
       const state = asRecord(change.conversationState);
       const revision = change.revision;
-      if (typeof revision === "number") this.#revisions.set(conversationId, revision);
+      if (this.#desired.has(conversationId) && typeof revision === "number") {
+        this.#revisions.set(conversationId, revision);
+      }
+      const sequence = ++this.#snapshotSequence;
+      const projection = projectThreadSettings(state);
+      if (projection) this.#settingsSnapshots.set(conversationId, projection);
+      else this.#settingsSnapshots.delete(conversationId);
+      const waiter = this.#settingsWaiters.get(conversationId);
+      if (waiter && sequence > waiter.afterSequence) {
+        clearTimeout(waiter.timer);
+        this.#settingsWaiters.delete(conversationId);
+        if (sourceClientId !== waiter.ownerClientId) {
+          this.#settingsOperations.delete(conversationId);
+          waiter.reject(new Error("Codex Desktop task owner changed during verification"));
+        } else if (!projection || !threadSettingsMatchResume(projection, waiter.expected)) {
+          const mismatches = Object.keys(waiter.expected).filter((key) => (
+            !projection || !threadSettingsMatchResume(projection, {
+              [key]: waiter.expected[key as keyof CodexThreadSettingsPatch]
+            })
+          ));
+          waiter.reject(new Error(`Codex Desktop settings verification failed (${mismatches.join(", ")})`));
+        } else waiter.resolve();
+      }
+      if (!this.#desired.has(conversationId)) return;
       this.#rawRequests.set(conversationId, Array.isArray(state?.requests) ? [...state.requests] : []);
       this.#refreshPendingFromRaw(conversationId);
       return;
     }
     if (change.type !== "patches") return;
+    const patches = Array.isArray(change.patches) ? change.patches : [];
+    if (patches.some(isSettingsPatch)) {
+      this.#settingsSnapshots.delete(conversationId);
+      this.#refreshSnapshot(conversationId);
+    }
+    if (!this.#desired.has(conversationId)) return;
     const baseRevision = change.baseRevision;
     const revision = change.revision;
     const knownRevision = this.#revisions.get(conversationId);
@@ -418,7 +595,7 @@ export class CodexDesktopFollower {
     }
     this.#revisions.set(conversationId, revision);
     const raw = this.#rawRequests.get(conversationId) ?? [];
-    const applied = applyRequestsPatches(raw, Array.isArray(change.patches) ? change.patches : []);
+    const applied = applyRequestsPatches(raw, patches);
     if (!applied.supported) {
       this.#refreshSnapshot(conversationId);
       return;
@@ -485,6 +662,10 @@ export class CodexDesktopFollower {
     this.#rawRequests.clear();
     this.#decidedLocally.clear();
     this.#revisions.clear();
+    this.#settingsSnapshots.clear();
+    for (const id of [...this.#settingsOperations.keys()]) {
+      this.#cancelSettingsOperation(id, new Error("Codex Desktop IPC connection closed during settings update"));
+    }
     if (hadState) this.#notify();
     // An already-scheduled retry stays authoritative: rescheduling here would
     // double-advance the backoff ladder when error + catch both tear down.
@@ -516,6 +697,65 @@ export class CodexDesktopFollower {
       }
     }
   }
+}
+
+function assertOwnerResponse(response: JsonRecord, ownerClientId: string): void {
+  if (response.handledByClientId !== ownerClientId) {
+    throw new Error("Codex Desktop response came from a different task owner");
+  }
+}
+
+const SETTINGS_STATE_KEYS = new Set(["latestThreadSettings", "latestModel", "latestReasoningEffort"]);
+
+function isSettingsPatch(value: unknown): boolean {
+  const patch = asRecord(value);
+  return Array.isArray(patch?.path)
+    && typeof patch.path[0] === "string"
+    && SETTINGS_STATE_KEYS.has(patch.path[0]);
+}
+
+/** Keep only settings needed for verification; never retain turns, text, or requests. */
+function projectThreadSettings(state: JsonRecord | undefined): JsonRecord | undefined {
+  const settings = asRecord(state?.latestThreadSettings);
+  if (!settings) return undefined;
+  const model = state?.latestModel !== undefined ? state.latestModel : settings.model;
+  const effort = state?.latestReasoningEffort !== undefined ? state.latestReasoningEffort : settings.effort;
+  if ((settings.model !== undefined && model !== settings.model)
+    || (settings.effort !== undefined && effort !== settings.effort)) return undefined;
+  const result: JsonRecord = {};
+  for (const [key, value] of Object.entries({
+    model,
+    reasoningEffort: effort,
+    serviceTier: settings.serviceTier,
+    approvalPolicy: settings.approvalPolicy,
+    approvalsReviewer: settings.approvalsReviewer
+  })) {
+    if (value === null || (typeof value === "string" && value.length <= 256)) result[key] = value;
+  }
+  const profile = asRecord(settings.activePermissionProfile);
+  if (settings.activePermissionProfile === null) result.activePermissionProfile = null;
+  else if (typeof profile?.id === "string" && profile.id.length <= 256) {
+    result.activePermissionProfile = { id: profile.id };
+  }
+  const sandbox = asRecord(settings.sandboxPolicy);
+  if (sandbox) {
+    const projected: JsonRecord = {};
+    if (typeof sandbox.type === "string") projected.type = sandbox.type;
+    for (const key of ["networkAccess", "excludeTmpdirEnvVar", "excludeSlashTmp"] as const) {
+      if (typeof sandbox[key] === "boolean") projected[key] = sandbox[key];
+    }
+    if (Array.isArray(sandbox.writableRoots)
+      && sandbox.writableRoots.length <= 64
+      && sandbox.writableRoots.every((root) => typeof root === "string" && root.length <= 4096)) {
+      projected.writableRoots = [...sandbox.writableRoots];
+    }
+    const knownKeys = new Set([
+      "type", "networkAccess", "writableRoots", "excludeTmpdirEnvVar", "excludeSlashTmp"
+    ]);
+    if (Object.keys(sandbox).some((key) => !knownKeys.has(key))) projected.type = "unverified";
+    result.sandbox = projected;
+  }
+  return result;
 }
 
 const APPROVAL_REQUEST_KINDS: Record<string, PendingApprovalKind> = {

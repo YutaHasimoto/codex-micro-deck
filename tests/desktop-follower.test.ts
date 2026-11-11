@@ -10,6 +10,7 @@ import {
   parseRequests
 } from "../src/codex/desktop-follower.ts";
 import { encodeIpcFrame, IpcFrameDecoder } from "../src/codex/desktop-ipc-client.ts";
+import type { CodexThreadSettingsPatch } from "../src/codex/desktop-ipc-client.ts";
 
 type Message = Record<string, unknown>;
 
@@ -290,13 +291,14 @@ test("updateThreadSettings travels over the persistent connection", async () => 
   const updates: Message[] = [];
   const harness = createHarness((message, send) => {
     if (message.type === "request" && message.method === "thread-follower-update-thread-settings") {
+      assert.equal(message.version, 2);
       updates.push(params(message) ?? {});
       send({
         type: "response",
         requestId: message.requestId,
         resultType: "success",
         method: message.method,
-        result: { ok: true }
+        result: { applied: true }
       });
     }
   });
@@ -309,6 +311,184 @@ test("updateThreadSettings travels over the persistent connection", async () => 
   } finally {
     follower.stop();
   }
+});
+
+const VERIFIED_PATCH: CodexThreadSettingsPatch = {
+  model: "gpt-6.1-sol",
+  effort: "high",
+  serviceTier: null,
+  approvalPolicy: "on-request",
+  approvalsReviewer: "user",
+  permissions: ":workspace"
+};
+
+test("verified settings use the exact discovered owner and a fresh snapshot even at an unchanged revision", async () => {
+  const harness = createVerifiedHarness();
+  const follower = harness.follower();
+  try {
+    follower.setDesiredConversations([CONV]);
+    follower.start();
+    await until(() => followingCount(harness.sent, CONV) === 1);
+    assert.equal(await follower.updateThreadSettingsVerified(CONV, VERIFIED_PATCH), true);
+    const requests = harness.sent.filter((message) => message.type === "request" && message.method !== "initialize");
+    assert.deepEqual(requests.map((message) => [message.method, message.version]), [
+      ["thread-owner-discovery", 1],
+      ["thread-follower-update-thread-settings", 2],
+      ["thread-follower-read-model-settings", 1]
+    ]);
+    assert.ok(requests.every((message) => params(message)?.conversationId === CONV));
+    assert.ok(requests.slice(1).every((message) => message.targetClientId === "desktop-owner"));
+    assert.equal(followingCount(harness.sent, CONV), 2);
+    assert.equal(JSON.stringify(harness.sent).includes("PRIVATE_TRANSCRIPT"), false);
+  } finally { follower.stop(); }
+});
+
+test("an exact target outside the visible followed set can be verified without selecting another task", async () => {
+  const harness = createVerifiedHarness({
+    snapshotRequests: [{ id: "extra-task-approval", method: "item/commandExecution/requestApproval", params: {} }]
+  });
+  const follower = harness.follower();
+  try {
+    follower.start();
+    await until(() => follower.isConnected);
+    assert.deepEqual(follower.desktopFollowedIds, []);
+    assert.equal(await follower.updateThreadSettingsVerified(CONV, VERIFIED_PATCH), true);
+    assert.equal(follower.pendingApprovals().has(CONV), false);
+    assert.ok(harness.sent.filter((message) => message.type === "request" && message.method !== "initialize")
+      .every((message) => params(message)?.conversationId === CONV));
+    assert.equal(harness.sent.filter((message) => message.method === "thread-stream-following-changed")
+      .at(-1)?.params && params(harness.sent.filter((message) => message.method === "thread-stream-following-changed").at(-1)!)?.following, false);
+  } finally { follower.stop(); }
+});
+
+test("only no-client-found during discovery permits a no-owner result", async () => {
+  const disconnected = new CodexDesktopFollower();
+  assert.equal(await disconnected.updateThreadSettingsVerified(CONV, VERIFIED_PATCH), false);
+  for (const code of ["no-client-found", "request-timeout", "client-disconnected", "request-version-mismatch"]) {
+    const harness = createVerifiedHarness({ discoveryError: code });
+    const follower = harness.follower();
+    try {
+      follower.start();
+      await until(() => follower.isConnected);
+      if (code === "no-client-found") {
+        assert.equal(await follower.updateThreadSettingsVerified(CONV, VERIFIED_PATCH), false);
+      } else {
+        await assert.rejects(() => follower.updateThreadSettingsVerified(CONV, VERIFIED_PATCH), /request failed/);
+      }
+      assert.equal(harness.sent.some((message) => message.method === "thread-follower-update-thread-settings"), false);
+    } finally { follower.stop(); }
+  }
+});
+
+test("false, legacy, and uncertain owner acknowledgements never become a no-owner fallback", async () => {
+  for (const options of [
+    { applied: false }, { legacyAck: true }, { updateError: "no-client-found" },
+    { updateError: "request-timeout" }, { updateError: "client-disconnected" },
+    { replyOwner: "different-owner" }
+  ]) {
+    const harness = createVerifiedHarness(options);
+    const follower = harness.follower();
+    try {
+      follower.start();
+      await until(() => follower.isConnected);
+      await assert.rejects(() => follower.updateThreadSettingsVerified(CONV, VERIFIED_PATCH));
+    } finally { follower.stop(); }
+  }
+});
+
+test("cached matching settings cannot replace a post-acknowledgement owner snapshot", async () => {
+  const harness = createVerifiedHarness({ freshSnapshot: false });
+  const follower = harness.follower();
+  try {
+    follower.setDesiredConversations([CONV]);
+    follower.start();
+    await until(() => followingCount(harness.sent, CONV) === 1);
+    await assert.rejects(() => follower.updateThreadSettingsVerified(CONV, VERIFIED_PATCH), /snapshot timed out/);
+  } finally { follower.stop(); }
+});
+
+test("owner readback, snapshot source, and every requested setting must agree", async () => {
+  for (const options of [
+    { readModel: "gpt-6.1-terra" },
+    { snapshotOwner: "different-owner" },
+    { snapshotSettings: { approvalsReviewer: "guardian_subagent" } },
+    { snapshotSettings: { serviceTier: "priority" } },
+    { snapshotSettings: { serviceTier: undefined } },
+    { snapshotSettings: { activePermissionProfile: undefined } },
+    { snapshotSettings: { activePermissionProfile: { id: ":danger-full-access" } } }
+  ]) {
+    const harness = createVerifiedHarness(options);
+    const follower = harness.follower();
+    try {
+      follower.start();
+      await until(() => follower.isConnected);
+      await assert.rejects(() => follower.updateThreadSettingsVerified(CONV, VERIFIED_PATCH), /verification|owner/);
+    } finally { follower.stop(); }
+  }
+});
+
+test("Custom owner verification retains the raw sandbox and rejects a stale named profile", async () => {
+  const customPatch: CodexThreadSettingsPatch = {
+    ...VERIFIED_PATCH,
+    permissions: undefined,
+    sandboxPolicy: { type: "readOnly", networkAccess: false }
+  };
+  delete customPatch.permissions;
+  for (const staleProfile of [false, true]) {
+    const harness = createVerifiedHarness({
+      snapshotSettings: {
+        activePermissionProfile: staleProfile ? { id: ":workspace" } : null,
+        sandboxPolicy: customPatch.sandboxPolicy
+      }
+    });
+    const follower = harness.follower();
+    try {
+      follower.start();
+      await until(() => follower.isConnected);
+      if (staleProfile) await assert.rejects(() => follower.updateThreadSettingsVerified(CONV, customPatch), /sandboxPolicy/);
+      else assert.equal(await follower.updateThreadSettingsVerified(CONV, customPatch), true);
+    } finally { follower.stop(); }
+  }
+});
+
+test("removing a tracked target rejects its pending verification", async () => {
+  const harness = createVerifiedHarness({ freshSnapshot: false });
+  const follower = harness.follower();
+  try {
+    follower.setDesiredConversations([CONV]);
+    follower.start();
+    await until(() => followingCount(harness.sent, CONV) === 1);
+    const update = follower.updateThreadSettingsVerified(CONV, VERIFIED_PATCH);
+    const rejected = assert.rejects(update, /removed/);
+    await until(() => followingCount(harness.sent, CONV) === 2);
+    follower.setDesiredConversations([]);
+    await rejected;
+  } finally { follower.stop(); }
+});
+
+test("disconnecting rejects a pending owner verification", async () => {
+  const harness = createVerifiedHarness({ freshSnapshot: false });
+  const follower = harness.follower();
+  follower.setDesiredConversations([CONV]);
+  follower.start();
+  await until(() => followingCount(harness.sent, CONV) === 1);
+  const update = follower.updateThreadSettingsVerified(CONV, VERIFIED_PATCH);
+  const rejected = assert.rejects(update, /connection closed/);
+  await until(() => followingCount(harness.sent, CONV) === 2);
+  follower.stop();
+  await rejected;
+});
+
+test("a settings patch invalidates the projection and requests a full owner snapshot", async () => {
+  const harness = createVerifiedHarness({ patchBeforeSnapshot: true });
+  const follower = harness.follower();
+  try {
+    follower.setDesiredConversations([CONV]);
+    follower.start();
+    await until(() => followingCount(harness.sent, CONV) === 1);
+    assert.equal(await follower.updateThreadSettingsVerified(CONV, VERIFIED_PATCH), true);
+    assert.equal(followingCount(harness.sent, CONV), 3);
+  } finally { follower.stop(); }
 });
 
 test("a following-status request re-affirms desired conversations", async () => {
@@ -472,6 +652,73 @@ function createHarness(
       });
     }
   };
+}
+
+function createVerifiedHarness(options: {
+  discoveryError?: string;
+  updateError?: string;
+  applied?: boolean;
+  legacyAck?: boolean;
+  replyOwner?: string;
+  readModel?: string;
+  snapshotOwner?: string;
+  snapshotSettings?: Record<string, unknown>;
+  freshSnapshot?: boolean;
+  patchBeforeSnapshot?: boolean;
+  snapshotRequests?: unknown[];
+} = {}) {
+  let patch: CodexThreadSettingsPatch = VERIFIED_PATCH;
+  let readComplete = false;
+  let patchSent = false;
+  return createHarness((message, send) => {
+    const reply = (result: unknown) => send({
+      type: "response", requestId: message.requestId, resultType: "success",
+      method: message.method, handledByClientId: options.replyOwner ?? "desktop-owner", result
+    });
+    const fail = (error: string) => send({
+      type: "response", requestId: message.requestId, resultType: "error", error
+    });
+    if (message.method === "thread-owner-discovery") {
+      if (options.discoveryError) fail(options.discoveryError);
+      else reply({});
+    } else if (message.method === "thread-follower-update-thread-settings") {
+      patch = params(message)?.threadSettings as CodexThreadSettingsPatch;
+      if (options.updateError) fail(options.updateError);
+      else reply(options.legacyAck ? { ok: true } : { applied: options.applied ?? true });
+    } else if (message.method === "thread-follower-read-model-settings") {
+      readComplete = true;
+      reply({ settings: {
+        model: options.readModel ?? patch.model,
+        reasoningEffort: patch.effort,
+        resumeState: "resumed"
+      } });
+    } else if (message.method === "thread-stream-following-changed"
+      && params(message)?.following === true
+      && (!readComplete || options.freshSnapshot !== false)) {
+      if (readComplete && options.patchBeforeSnapshot && !patchSent) {
+        patchSent = true;
+        send(stateChanged(CONV, {
+          type: "patches", baseRevision: 7, revision: 8,
+          patches: [{ op: "replace", path: ["latestThreadSettings", "effort"], value: patch.effort }]
+        }));
+        return;
+      }
+      send({ ...stateChanged(CONV, {
+        type: "snapshot", revision: patchSent ? 8 : 7,
+        conversationState: {
+          requests: options.snapshotRequests ?? [], turns: [{ text: "PRIVATE_TRANSCRIPT" }],
+          latestModel: patch.model,
+          latestReasoningEffort: patch.effort,
+          latestThreadSettings: {
+            ...patch,
+            serviceTier: patch.serviceTier === null ? "default" : patch.serviceTier,
+            activePermissionProfile: patch.permissions ? { id: patch.permissions, extends: null } : null,
+            ...options.snapshotSettings
+          }
+        }
+      }), sourceClientId: options.snapshotOwner ?? "desktop-owner" });
+    }
+  });
 }
 
 async function until(check: () => boolean, timeoutMs = 1_500): Promise<void> {

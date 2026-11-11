@@ -158,7 +158,7 @@ test("applying model preserves pending reasoning and sends the complete saved sn
   assert.equal(coordinator.encoderPresentation({}, reasoning).color, "amber");
 
   await coordinator.pressEncoder({}, model);
-  assert.deepEqual(follower.liveUpdates[0]?.threadSettings, {
+  assert.deepEqual(follower.ownerAttempts[0]?.threadSettings, {
     model: "gpt-5.6-terra",
     effort: "low",
     serviceTier: null,
@@ -187,13 +187,14 @@ test("concurrent control applies keep each complete six-task batch in invocation
   const follower = fakeFollower();
   const appServer = fakeAppServer();
   follower.stub.isConnected = true;
-  follower.stub.updateThreadSettings = async (_conversationId, threadSettings) => {
+  follower.stub.updateThreadSettingsVerified = async (_conversationId, threadSettings) => {
     liveStarts.push(structuredClone(threadSettings));
     if (liveStarts.length === 1) {
       announceModelStarted?.();
       await modelPending;
     }
     liveCompletions.push(structuredClone(threadSettings));
+    return false;
   };
   const coordinator = new CodexDeckCoordinator({
     provider: { async listRecentThreads() { return [thread]; } },
@@ -251,12 +252,13 @@ test("a same-dial rotation waits for an in-flight apply before staging the newer
   const follower = fakeFollower();
   const appServer = fakeAppServer();
   follower.stub.isConnected = true;
-  follower.stub.updateThreadSettings = async (_conversationId, patch) => {
+  follower.stub.updateThreadSettingsVerified = async (_conversationId, patch) => {
     livePatches.push(structuredClone(patch));
     if (livePatches.length === 1) {
       announceStarted?.();
       await firstPending;
     }
+    return false;
   };
   const coordinator = new CodexDeckCoordinator({
     provider: { async listRecentThreads() { return [thread]; } },
@@ -307,13 +309,12 @@ test("a failed live apply does not poison the control apply queue", async () => 
   const thread = snapshot("1", "Task", "idle");
   const follower = fakeFollower();
   follower.stub.isConnected = true;
-  follower.stub.updateThreadSettings = async () => {
+  follower.stub.updateThreadSettingsVerified = async () => {
     liveCalls += 1;
     if (liveCalls === 1) throw new Error("first live apply failed");
+    return false;
   };
-  const appServer = fakeAppServer({
-    failRequest: (_method, _params, index) => index === 0
-  });
+  const appServer = fakeAppServer();
   const coordinator = new CodexDeckCoordinator({
     provider: { async listRecentThreads() { return [thread]; } },
     codex: fixture([]).codexController,
@@ -377,7 +378,7 @@ test("dial apply targets the currently open Desktop chat without an Agent key", 
   await coordinator.rotateEncoder({}, { column: 1, row: 0 }, 1);
   await coordinator.pressEncoder({}, { column: 1, row: 0 });
 
-  assert.deepEqual(follower.liveUpdates.at(-1), {
+  assert.deepEqual(follower.ownerAttempts.at(-1), {
     conversationId: thread.id,
     threadSettings: {
       model: "gpt-5.6-sol",
@@ -416,8 +417,8 @@ test("dial apply includes an open Desktop completed task alongside six tracked A
     [...tracked.map((thread) => thread.id), openCompleted.id]
   );
   assert.deepEqual(
-    follower.liveUpdates.map((update) => update.conversationId),
-    [openCompleted.id]
+    follower.ownerAttempts.map((update) => update.conversationId),
+    [...tracked.map((thread) => thread.id), openCompleted.id]
   );
 });
 
@@ -472,15 +473,15 @@ test("legacy Never cannot be applied until an Access candidate is selected", asy
     /Legacy Access value is read-only.*Ask, Delegate, Full, or Custom/
   );
   assert.deepEqual(calls, ["read"]);
-  assert.deepEqual([...follower.liveUpdates], []);
+  assert.deepEqual([...follower.ownerAttempts], []);
 
   await coordinator.rotateEncoder({}, approval, 1);
   assert.equal(coordinator.encoderPresentation({}, approval).value, "Ask");
   const outcome = await coordinator.pressEncoder({}, approval);
   assert.equal(outcome, "applied");
   assert.deepEqual(calls, ["read", "apply:approval:ask"]);
-  assert.equal(follower.liveUpdates.length, 1);
-  assert.equal(follower.liveUpdates[0]?.threadSettings.approvalPolicy, "on-request");
+  assert.equal(follower.ownerAttempts.length, 1);
+  assert.equal(follower.ownerAttempts[0]?.threadSettings.approvalPolicy, "on-request");
 });
 
 test("unpersisted Access infers exact config presets and keeps mixed config Custom", async () => {
@@ -563,7 +564,7 @@ test("tracked Agent keeps the selected value visible after a successful sync", a
   await coordinator.rotateEncoder({}, { column: 1, row: 0 }, 1);
   await coordinator.pressEncoder({}, { column: 1, row: 0 });
 
-  assert.deepEqual(follower.liveUpdates.at(-1), {
+  assert.deepEqual(follower.ownerAttempts.at(-1), {
     conversationId: thread.id,
     threadSettings: {
       model: "gpt-5.6-sol",
@@ -619,7 +620,7 @@ test("Full Access needs two presses, and rotate or hold clears the confirmation 
 
   assert.equal(await coordinator.pressEncoder({}, access), "applied");
   assert.deepEqual(configCalls, ["apply:approval:full"]);
-  assert.equal(follower.liveUpdates.at(-1)?.threadSettings.permissions, ":danger-full-access");
+  assert.equal(follower.ownerAttempts.at(-1)?.threadSettings.permissions, ":danger-full-access");
   assert.equal(persisted.at(-1)?.accessMode, "full");
 
   await coordinator.rotateEncoder({}, access, 1); // Full -> Custom
@@ -641,8 +642,8 @@ test("Full Access applies once from the settled rotation source without a physic
   assert.equal(coordinator.encoderPresentation({}, access).hint, "auto in 80ms · next turn");
   assert.equal(await coordinator.pressEncoder({}, access, "auto"), "applied");
   assert.deepEqual(configCalls, ["apply:approval:full"]);
-  assert.equal(follower.liveUpdates.length, 1);
-  assert.equal(follower.liveUpdates[0]?.threadSettings.permissions, ":danger-full-access");
+  assert.equal(follower.ownerAttempts.length, 1);
+  assert.equal(follower.ownerAttempts[0]?.threadSettings.permissions, ":danger-full-access");
 });
 
 test("a legacy pressShortcut cannot hijack a focused dial trailing auto-apply", async () => {
@@ -672,8 +673,8 @@ test("persisted Custom Access survives Model changes and uses no named profile",
 
   assert.equal(coordinator.globalSettings.accessMode, "custom");
   assert.equal(coordinator.encoderPresentation({}, { column: 3, row: 0 }).value, "Custom");
-  assert.equal(follower.liveUpdates.at(-1)?.threadSettings.permissions, undefined);
-  assert.deepEqual(follower.liveUpdates.at(-1)?.threadSettings.sandboxPolicy, {
+  assert.equal(follower.ownerAttempts.at(-1)?.threadSettings.permissions, undefined);
+  assert.deepEqual(follower.ownerAttempts.at(-1)?.threadSettings.sandboxPolicy, {
     type: "readOnly", networkAccess: false
   });
 });
@@ -687,10 +688,6 @@ test("a partial task sync reports its failure reason safely without changing the
   ];
   const follower = fakeFollower();
   follower.stub.isConnected = true;
-  follower.stub.updateThreadSettings = async (conversationId, patch) => {
-    if (conversationId === threads[1]!.id) throw new Error("second task unavailable");
-    follower.liveUpdates.push({ conversationId, threadSettings: structuredClone(patch) });
-  };
   const appServer = fakeAppServer({
     failRequest: (_method, params) => {
       if ((params as { threadId?: string }).threadId === threads[1]!.id) {
@@ -738,7 +735,7 @@ test("all task sync failures keep the saved default and reject for physical aler
   const thread = snapshot("1", "Tracked", "idle");
   const follower = fakeFollower();
   follower.stub.isConnected = true;
-  follower.stub.updateThreadSettings = async () => {
+  follower.stub.updateThreadSettingsVerified = async () => {
     throw new Error("Codex Desktop IPC is unavailable");
   };
   const appServer = fakeAppServer({ failRequests: true });
@@ -759,7 +756,7 @@ test("all task sync failures keep the saved default and reject for physical aler
   assert.equal(coordinator.encoderPresentation({}, model).hint, "Live failed · default saved");
   assert.equal(coordinator.encoderPresentation({}, model).color, "amber");
   assert.equal(CONTROL_WARNING_FEEDBACK_MS, 4_000);
-  assert.equal(appServer.events.at(-1), "stop");
+  assert.deepEqual(appServer.events, [], "an uncertain owner failure must not start a second writer");
 });
 
 test("a read-back reviewer mismatch retries once and never shows a false sync", async () => {
@@ -802,7 +799,7 @@ test("a read-back reviewer mismatch retries once and never shows a false sync", 
       "thread/resume"
     ]
   );
-  assert.equal(follower.liveUpdates.length, 1);
+  assert.equal(follower.ownerAttempts.length, 1);
   assert.equal(coordinator.encoderPresentation({}, approval).value, "⚠ 0/1");
 });
 
@@ -822,7 +819,7 @@ test("both transports failing with a disconnected follower reports zero synced t
     /failed for all 1 tracked tasks/
   );
   assert.deepEqual(configCalls, ["apply:speed:fast"]);
-  assert.deepEqual(follower.liveUpdates, []);
+  assert.deepEqual(follower.ownerAttempts, []);
   assert.equal(coordinator.encoderPresentation({}, speed).value, "⚠ 0/1");
   assert.equal(appServer.events.at(-1), "stop");
 });
@@ -1544,7 +1541,7 @@ test("dial apply syncs the complete snapshot to a tracked task", async () => {
   const outcome = await coordinator.pressEncoder({}, { column: 1, row: 0 });
 
   assert.equal(outcome, "applied");
-  assert.deepEqual(follower.liveUpdates, [{
+  assert.deepEqual(follower.ownerAttempts, [{
     conversationId: thread.id,
     threadSettings: {
       model: "gpt-5.6-sol",
@@ -1586,7 +1583,7 @@ test("an unknown new-tab conversation does not block dial apply to the real task
   const outcome = await coordinator.pressEncoder({}, { column: 1, row: 0 });
 
   assert.equal(outcome, "applied");
-  assert.equal(follower.liveUpdates.at(-1)?.conversationId, thread.id);
+  assert.equal(follower.ownerAttempts.at(-1)?.conversationId, thread.id);
 });
 
 test("all six tracked Agent tasks receive one identical full snapshot", async () => {
@@ -1600,11 +1597,11 @@ test("all six tracked Agent tasks receive one identical full snapshot", async ()
 
   assert.equal(outcome, "applied");
   assert.deepEqual(
-    follower.liveUpdates.map((entry) => entry.conversationId),
+    follower.ownerAttempts.map((entry) => entry.conversationId),
     threads.map((thread) => thread.id)
   );
-  assert.equal(new Set(follower.liveUpdates.map((entry) => JSON.stringify(entry.threadSettings))).size, 1);
-  assert.deepEqual(follower.liveUpdates[0]?.threadSettings, {
+  assert.equal(new Set(follower.ownerAttempts.map((entry) => JSON.stringify(entry.threadSettings))).size, 1);
+  assert.deepEqual(follower.ownerAttempts[0]?.threadSettings, {
     model: "gpt-5.6-terra",
     effort: "low",
     serviceTier: null,
@@ -1616,7 +1613,7 @@ test("all six tracked Agent tasks receive one identical full snapshot", async ()
   assert.equal(presentation.hint, "rotate choose · tap reload");
 });
 
-test("one followed and five inactive tasks persist through one exact-ID App Server batch", async () => {
+test("owner discovery checks every exact target regardless of the followed window before native fallback", async () => {
   const threads = ["1", "2", "3", "4", "5", "6"].map(
     (id) => snapshot(id, `Task ${id}`, "idle")
   );
@@ -1644,8 +1641,8 @@ test("one followed and five inactive tasks persist through one exact-ID App Serv
   assert.equal(outcome, "applied");
   assert.equal(resolverCalls, 1);
   assert.deepEqual(
-    follower.liveUpdates.map((entry) => entry.conversationId),
-    [threads[0]!.id]
+    follower.ownerAttempts.map((entry) => entry.conversationId),
+    threads.map((thread) => thread.id)
   );
   assert.equal(appServer.events[0], "start:/Applications/ChatGPT.app/Contents/Resources/codex:true");
   assert.equal(appServer.events.at(-1), "stop");
@@ -1681,7 +1678,7 @@ test("one followed and five inactive tasks persist through one exact-ID App Serv
   assert.equal(presentation.hint, "rotate choose · tap reload");
 });
 
-test("followed tasks hot-refresh before the shared App Server batch, while task persistence starts in parallel", async () => {
+test("owner discovery precedes one shared native batch while per-target persistence remains parallel", async () => {
   const threads = [snapshot("1", "Task 1", "idle"), snapshot("2", "Task 2", "idle")];
   const follower = fakeFollower();
   follower.stub.isConnected = true;
@@ -1737,9 +1734,9 @@ test("followed tasks hot-refresh before the shared App Server batch, while task 
     config: fakeConfig(),
     follower: {
       ...follower.stub,
-      async updateThreadSettings(conversationId, threadSettings) {
-        events.push(`desktop:${conversationId}`);
-        await follower.stub.updateThreadSettings(conversationId, threadSettings);
+      async updateThreadSettingsVerified(conversationId, threadSettings) {
+        events.push(`owner:${conversationId}`);
+        return follower.stub.updateThreadSettingsVerified(conversationId, threadSettings);
       }
     },
     appServer,
@@ -1749,25 +1746,27 @@ test("followed tasks hot-refresh before the shared App Server batch, while task 
   await coordinator.rotateEncoder({}, { column: 0, row: 0 }, 1);
 
   assert.equal(await coordinator.pressEncoder({}, { column: 0, row: 0 }), "applied");
-  assert.ok(events.indexOf(`desktop:${threads[0]!.id}`) < events.indexOf("app-server:start"));
-  assert.ok(events.indexOf(`desktop:${threads[1]!.id}`) < events.indexOf("app-server:start"));
+  for (const thread of threads) {
+    assert.ok(events.includes(`owner:${thread.id}`));
+    assert.ok(events.indexOf(`owner:${thread.id}`) < events.indexOf("app-server:start"));
+  }
   assert.equal(firstResumeReleases.length, 2, "both task chains reached their first resume together");
   for (const thread of threads) {
     const threadEvents = events.filter((event) => event.includes(thread.id));
-    assert.deepEqual(threadEvents.filter((event) => !event.startsWith("desktop:")), [
+    assert.deepEqual(threadEvents.filter((event) => !event.startsWith("owner:")), [
       `resume:first:${thread.id}`, `update:${thread.id}`
     ]);
   }
   assert.equal(events.at(-1), "app-server:stop");
 });
 
-test("a failed followed update falls back to the same exact App Server task", async () => {
+test("a definitively unavailable owner falls back to the same exact native task", async () => {
   const thread = snapshot("1", "Task", "idle");
   const follower = fakeFollower();
   follower.stub.isConnected = true;
   follower.followOnly([thread.id]);
-  follower.stub.updateThreadSettings = async () => {
-    throw new Error("conversation became inactive");
+  follower.stub.updateThreadSettingsVerified = async () => {
+    return false;
   };
   const appServer = fakeAppServer();
   const coordinator = new CodexDeckCoordinator({
@@ -1797,6 +1796,271 @@ test("a failed followed update falls back to the same exact App Server task", as
   assert.equal(appServer.events.at(-1), "stop");
 });
 
+test("mixed owned and unowned Agent slots verify every target without acquiring a second writer", async () => {
+  const threads = ["1", "2", "3", "4", "5", "6", "7", "8"].map(
+    (id) => snapshot(id, `Task ${id}`, "idle")
+  );
+  // The released six-Agent profile and the pending eight-Agent profile share
+  // this sync code. Derive the expected slots from the public key mapping so
+  // the same regression also covers five owners plus three native tasks when
+  // integrated into the user's eight-Agent source.
+  const slotCount = [0, 1].flatMap((row) => [0, 1, 2, 3].map((column) => keyRole({}, { column, row })))
+    .filter((role) => role.startsWith("agent-")).length;
+  const targets = threads.slice(0, slotCount).map((thread) => thread.id);
+  const owned = new Set(targets.slice(0, 5));
+  const persisted = new Map<string, CodexThreadSettingsPatch>();
+  const checks: string[] = [];
+  const ownerWrites: string[] = [];
+  const follower = fakeFollower();
+  follower.stub.isConnected = true;
+  follower.followOnly([]);
+  follower.stub.updateThreadSettingsVerified = async (id, patch) => {
+    checks.push(id);
+    if (!owned.has(id)) return false;
+    ownerWrites.push(id);
+    persisted.set(id, structuredClone(patch));
+    return true;
+  };
+  const appServer = fakeAppServer({
+    ownerPersistedSettings: persisted,
+    failRequest(method, params) {
+      const id = (params as { threadId: string }).threadId;
+      if (owned.has(id) && method !== "thread/read") {
+        throw new Error("thread already has an active writer");
+      }
+      return false;
+    }
+  });
+  const coordinator = new CodexDeckCoordinator({
+    provider: { async listRecentThreads() { return threads; } },
+    codex: fixture([]).codexController, config: fakeConfig(),
+    follower: follower.stub, appServer: appServer.stub,
+    resolveCodexCliPath: async () => "/Applications/ChatGPT.app/Contents/Resources/codex"
+  });
+  await coordinator.poll();
+  await coordinator.rotateEncoder({}, { column: 0, row: 0 }, 1);
+  assert.equal(await coordinator.pressEncoder({}, { column: 0, row: 0 }), "applied");
+  assert.deepEqual(checks, targets, "hidden owners must be checked too");
+  assert.deepEqual(ownerWrites, [...owned]);
+  assert.equal(appServer.events.filter((event) => event.startsWith("start:")).length, 1);
+  assert.equal(appServer.events.filter((event) => event === "stop").length, 1);
+  for (const id of targets) {
+    const requests = appServer.requests.filter((request) => (request.params as { threadId: string }).threadId === id);
+    assert.deepEqual(requests.map((request) => request.method), owned.has(id)
+      ? ["thread/read"] : ["thread/resume", "thread/settings/update", "thread/resume"]);
+    if (owned.has(id)) assert.deepEqual(requests[0]?.params, { threadId: id, includeTurns: false });
+  }
+  assert.equal(coordinator.encoderPresentation({}, { column: 0, row: 0 }).value, "5.6 Terra");
+});
+
+test("uncertain owner failures never start a standalone fallback writer", async (t) => {
+  for (const reason of ["request-timeout", "owner rejected settings", "applied was false", "owner settings verification failed"]) {
+    await t.test(reason, async () => {
+      const thread = snapshot("1", "Owned", "idle");
+      const follower = fakeFollower();
+      follower.stub.isConnected = true;
+      follower.stub.updateThreadSettingsVerified = async () => { throw new Error(reason); };
+      const appServer = fakeAppServer();
+      const coordinator = new CodexDeckCoordinator({
+        provider: { async listRecentThreads() { return [thread]; } },
+        codex: fixture([]).codexController, config: fakeConfig(),
+        follower: follower.stub, appServer: appServer.stub
+      });
+      await coordinator.poll();
+      await coordinator.rotateEncoder({}, { column: 1, row: 0 }, 1);
+      await assert.rejects(() => coordinator.pressEncoder({}, { column: 1, row: 0 }), /failed for all 1 tracked tasks/);
+      assert.deepEqual(appServer.events, []);
+      assert.deepEqual(appServer.requests, []);
+      assert.equal(coordinator.encoderPresentation({}, { column: 1, row: 0 }).value, "⚠ 0/1");
+    });
+  }
+});
+
+test("a non-boolean owner result cannot authorize a native fallback writer", async () => {
+  const thread = snapshot("1", "Owned", "idle");
+  const follower = fakeFollower();
+  follower.stub.updateThreadSettingsVerified = async () => undefined as unknown as boolean;
+  const appServer = fakeAppServer();
+  const coordinator = new CodexDeckCoordinator({
+    provider: { async listRecentThreads() { return [thread]; } },
+    codex: fixture([]).codexController, config: fakeConfig(),
+    follower: follower.stub, appServer: appServer.stub
+  });
+  await coordinator.poll();
+  await coordinator.rotateEncoder({}, { column: 0, row: 0 }, 1);
+  await assert.rejects(() => coordinator.pressEncoder({}, { column: 0, row: 0 }), /invalid owner verification result/);
+  assert.deepEqual(appServer.events, []);
+  assert.deepEqual(appServer.requests, []);
+  assert.equal(coordinator.encoderPresentation({}, { column: 0, row: 0 }).value, "⚠ 0/1");
+});
+
+test("owner acknowledgement requires independent persisted model and effort readback for the exact thread", async (t) => {
+  const variants = [
+    { name: "model", change: (result: Record<string, unknown>) => ({ thread: { ...(result.thread as object), model: "stale-model" } }) },
+    { name: "effort", change: (result: Record<string, unknown>) => ({ thread: { ...(result.thread as object), reasoningEffort: "stale-effort" } }) },
+    { name: "threadId", change: (result: Record<string, unknown>) => ({ thread: { ...(result.thread as object), id: "2".repeat(16) } }) },
+    { name: "malformed metadata", change: (result: Record<string, unknown>) => ({ thread: { ...(result.thread as object), model: {} } }) }
+  ];
+  for (const { name, change } of variants) {
+    await t.test(name, async () => {
+      const thread = snapshot("1", "Owned", "idle");
+      const persisted = new Map<string, CodexThreadSettingsPatch>();
+      const follower = fakeFollower();
+      let ownerWrites = 0;
+      follower.stub.updateThreadSettingsVerified = async (id, patch) => {
+        ownerWrites += 1;
+        persisted.set(id, structuredClone(patch));
+        return true;
+      };
+      const appServer = fakeAppServer({ ownerPersistedSettings: persisted, readResult: change });
+      const coordinator = new CodexDeckCoordinator({
+        provider: { async listRecentThreads() { return [thread]; } },
+        codex: fixture([]).codexController, config: fakeConfig(),
+        follower: follower.stub, appServer: appServer.stub,
+        resolveCodexCliPath: async () => "/Applications/ChatGPT.app/Contents/Resources/codex"
+      });
+      await coordinator.poll();
+      await coordinator.rotateEncoder({}, { column: 0, row: 0 }, 1);
+      await assert.rejects(() => coordinator.pressEncoder({}, { column: 0, row: 0 }), (error: unknown) => {
+        assert.ok(error instanceof Error);
+        assert.ok(error.message.includes(`persistence verification failed (${name})`));
+        assert.doesNotMatch(error.message, /stale-model|stale-effort|2222222222222222/);
+        return true;
+      });
+      assert.equal(ownerWrites, 1, "do not blindly re-submit an uncertain write");
+      assert.deepEqual(appServer.requests.map((request) => request.method),
+        Array.from({ length: name === "model" || name === "effort" ? 5 : 1 }, () => "thread/read"));
+      assert.equal(appServer.events.at(-1), "stop");
+    });
+  }
+});
+
+test("a failed read-only persisted lookup cannot become a writer fallback", async () => {
+  const thread = snapshot("1", "Owned", "idle");
+  const follower = fakeFollower();
+  follower.stub.updateThreadSettingsVerified = async () => true;
+  const appServer = fakeAppServer({ failRequests: true });
+  const coordinator = new CodexDeckCoordinator({
+    provider: { async listRecentThreads() { return [thread]; } },
+    codex: fixture([]).codexController, config: fakeConfig(),
+    follower: follower.stub, appServer: appServer.stub,
+    resolveCodexCliPath: async () => "/Applications/ChatGPT.app/Contents/Resources/codex"
+  });
+  await coordinator.poll();
+  await coordinator.rotateEncoder({}, { column: 0, row: 0 }, 1);
+  await assert.rejects(() => coordinator.pressEncoder({}, { column: 0, row: 0 }), /failed for all 1 tracked tasks/);
+  assert.deepEqual(appServer.requests.map((request) => request.method), ["thread/read"]);
+  assert.equal(appServer.events.at(-1), "stop");
+});
+
+test("owner persistence projection may catch up through bounded reads without another write", async () => {
+  const thread = snapshot("1", "Owned", "idle");
+  const persisted = new Map<string, CodexThreadSettingsPatch>();
+  const follower = fakeFollower();
+  let writes = 0;
+  follower.stub.updateThreadSettingsVerified = async (id, patch) => {
+    writes += 1;
+    persisted.set(id, structuredClone(patch));
+    return true;
+  };
+  let reads = 0;
+  const appServer = fakeAppServer({
+    ownerPersistedSettings: persisted,
+    readResult(result) {
+      reads += 1;
+      return reads < 3 ? { thread: { id: thread.id, model: "old", reasoningEffort: "old" } } : result;
+    }
+  });
+  const coordinator = new CodexDeckCoordinator({
+    provider: { async listRecentThreads() { return [thread]; } },
+    codex: fixture([]).codexController, config: fakeConfig(),
+    follower: follower.stub, appServer: appServer.stub,
+    resolveCodexCliPath: async () => "/Applications/ChatGPT.app/Contents/Resources/codex"
+  });
+  await coordinator.poll();
+  await coordinator.rotateEncoder({}, { column: 0, row: 0 }, 1);
+  assert.equal(await coordinator.pressEncoder({}, { column: 0, row: 0 }), "applied");
+  assert.equal(writes, 1);
+  assert.deepEqual(appServer.requests.map((request) => request.method),
+    ["thread/read", "thread/read", "thread/read"]);
+});
+
+test("a stale no-owner result cannot bypass an existing native writer lock", async () => {
+  const thread = snapshot("1", "Owned", "idle");
+  const follower = fakeFollower();
+  const appServer = fakeAppServer({
+    failRequest(method) {
+      if (method === "thread/resume") throw new Error("thread already has an active writer");
+      return false;
+    }
+  });
+  const coordinator = new CodexDeckCoordinator({
+    provider: { async listRecentThreads() { return [thread]; } },
+    codex: fixture([]).codexController, config: fakeConfig(),
+    follower: follower.stub, appServer: appServer.stub,
+    resolveCodexCliPath: async () => "/Applications/ChatGPT.app/Contents/Resources/codex"
+  });
+  await coordinator.poll();
+  await coordinator.rotateEncoder({}, { column: 0, row: 0 }, 1);
+  await assert.rejects(() => coordinator.pressEncoder({}, { column: 0, row: 0 }), /already has an active writer/);
+  assert.deepEqual(appServer.requests.map((request) => request.method), ["thread/resume"]);
+  assert.equal(appServer.events.at(-1), "stop");
+});
+
+test("a later dial batch waits until the prior owner write and independent readback have drained", async () => {
+  const thread = snapshot("1", "Owned", "idle");
+  const persisted = new Map<string, CodexThreadSettingsPatch>();
+  const events: string[] = [];
+  const follower = fakeFollower();
+  let ownerCalls = 0;
+  let announceFirstRead!: () => void;
+  const firstReadStarted = new Promise<void>((resolve) => { announceFirstRead = resolve; });
+  let releaseFirstRead!: () => void;
+  const firstReadPending = new Promise<void>((resolve) => { releaseFirstRead = resolve; });
+  follower.stub.updateThreadSettingsVerified = async (id, patch) => {
+    ownerCalls += 1;
+    events.push(`owner:${patch.model}:${patch.effort}`);
+    persisted.set(id, structuredClone(patch));
+    return true;
+  };
+  let readCalls = 0;
+  const appServer = fakeAppServer({
+    ownerPersistedSettings: persisted,
+    readResult: async (result) => {
+      readCalls += 1;
+      events.push(`read:start:${readCalls}`);
+      if (readCalls === 1) {
+        announceFirstRead();
+        await firstReadPending;
+      }
+      events.push(`read:done:${readCalls}`);
+      return result;
+    }
+  });
+  const coordinator = new CodexDeckCoordinator({
+    provider: { async listRecentThreads() { return [thread]; } },
+    codex: fixture([]).codexController, config: fakeConfig(),
+    follower: follower.stub, appServer: appServer.stub,
+    resolveCodexCliPath: async () => "/Applications/ChatGPT.app/Contents/Resources/codex"
+  });
+  await coordinator.poll();
+  await coordinator.rotateEncoder({}, { column: 0, row: 0 }, 1);
+  await coordinator.rotateEncoder({}, { column: 1, row: 0 }, 1);
+  const first = coordinator.pressEncoder({}, { column: 0, row: 0 });
+  const second = coordinator.pressEncoder({}, { column: 1, row: 0 });
+  await firstReadStarted;
+  assert.equal(ownerCalls, 1);
+  releaseFirstRead();
+  await Promise.all([first, second]);
+  assert.deepEqual(events, [
+    "owner:gpt-5.6-terra:low", "read:start:1", "read:done:1",
+    "owner:gpt-5.6-terra:medium", "read:start:2", "read:done:2"
+  ]);
+  assert.equal(persisted.get(thread.id)?.effort, "medium");
+  assert.equal(appServer.events.filter((event) => event.startsWith("start:")).length, 2);
+  assert.equal(appServer.events.filter((event) => event === "stop").length, 2);
+});
+
 test("a fixed Agent slot replaces its auto task and the sync target count stays at six", async () => {
   const threads = ["1", "2", "3", "4", "5", "6"].map(
     (id) => snapshot(id, `Task ${id}`, "idle")
@@ -1814,10 +2078,10 @@ test("a fixed Agent slot replaces its auto task and the sync target count stays 
   await coordinator.rotateEncoder({}, { column: 2, row: 0 }, 1);
   await coordinator.pressEncoder({}, { column: 2, row: 0 });
   assert.deepEqual(
-    follower.liveUpdates.map((entry) => entry.conversationId),
+    follower.ownerAttempts.map((entry) => entry.conversationId),
     expectedTargets
   );
-  assert.equal(follower.liveUpdates.some((entry) => entry.conversationId === threads[5]!.id), false);
+  assert.equal(follower.ownerAttempts.some((entry) => entry.conversationId === threads[5]!.id), false);
 });
 
 test("clearing a removed Agent role drops its fixed task from future sync batches", async () => {
@@ -1841,10 +2105,10 @@ test("clearing a removed Agent role drops its fixed task from future sync batche
   await coordinator.rotateEncoder({}, { column: 2, row: 0 }, 1);
   await coordinator.pressEncoder({}, { column: 2, row: 0 });
   assert.deepEqual(
-    follower.liveUpdates.map((entry) => entry.conversationId),
+    follower.ownerAttempts.map((entry) => entry.conversationId),
     expectedTargets
   );
-  assert.equal(follower.liveUpdates.some((entry) => entry.conversationId === fixedId), false);
+  assert.equal(follower.ownerAttempts.some((entry) => entry.conversationId === fixedId), false);
 });
 
 test("a stale disappearing key cannot clear a newer owner of the same Agent slot", async () => {
@@ -1886,7 +2150,7 @@ test("duplicate, invalid, and explicitly unassigned fixed slots never add sync t
   await coordinator.rotateEncoder({}, { column: 0, row: 0 }, 1);
   await coordinator.pressEncoder({}, { column: 0, row: 0 });
   assert.deepEqual(
-    follower.liveUpdates.map((entry) => entry.conversationId),
+    follower.ownerAttempts.map((entry) => entry.conversationId),
     expectedTargets
   );
 });
@@ -2028,7 +2292,7 @@ function fakeFollower() {
   const pending = new Map<string, PendingApproval[]>();
   let autoFollowDesired = true;
   const decisions: string[] = [];
-  const liveUpdates: Array<{
+  const ownerAttempts: Array<{
     conversationId: string;
     threadSettings: CodexThreadSettingsPatch;
   }> = [];
@@ -2064,18 +2328,21 @@ function fakeFollower() {
       if (remaining.length) pending.set(conversationId, remaining);
       else pending.delete(conversationId);
     },
-    async updateThreadSettings(
+    async updateThreadSettingsVerified(
       conversationId: string,
       threadSettings: CodexThreadSettingsPatch
-    ): Promise<void> {
-      if (!this.isConnected) throw new Error("Codex Desktop IPC is unavailable");
-      liveUpdates.push({ conversationId, threadSettings: structuredClone(threadSettings) });
+    ): Promise<boolean> {
+      if (!this.isConnected) return false;
+      ownerAttempts.push({ conversationId, threadSettings: structuredClone(threadSettings) });
+      // This default fixture models a connected router with no owner for the
+      // exact target. No settings are submitted; native fallback is permitted.
+      return false;
     }
   };
   return {
     stub,
     decisions,
-    liveUpdates,
+    ownerAttempts,
     desired,
     setPending(id: string, requests: PendingApproval[]): void { pending.set(id, requests); },
     clearPending(id: string): void { pending.delete(id); },
@@ -2154,6 +2421,8 @@ function fakeAppServer(options: {
   failRequests?: boolean;
   failRequest?: (method: string, params: unknown, index: number) => boolean;
   resumeResult?: (result: Record<string, unknown>) => unknown;
+  ownerPersistedSettings?: Map<string, CodexThreadSettingsPatch>;
+  readResult?: (result: Record<string, unknown>, threadId: string) => unknown;
 } = {}) {
   const events: string[] = [];
   const requests: Array<{ method: string; params: unknown; timeoutMs: number | undefined }> = [];
@@ -2171,6 +2440,11 @@ function fakeAppServer(options: {
       }
       const record = params as Record<string, unknown>;
       const threadId = typeof record.threadId === "string" ? record.threadId : undefined;
+      if (method === "thread/read" && threadId) {
+        const settings = options.ownerPersistedSettings?.get(threadId) ?? saved.get(threadId);
+        const result = { thread: { id: threadId, model: settings?.model, reasoningEffort: settings?.effort } };
+        return options.readResult?.(result, threadId) ?? result;
+      }
       if (method === "thread/settings/update" && threadId) {
         saved.set(threadId, {
           model: typeof record.model === "string" ? record.model : undefined,

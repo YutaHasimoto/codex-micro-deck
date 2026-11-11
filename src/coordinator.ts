@@ -55,6 +55,8 @@ export const CONTROL_SUCCESS_FEEDBACK_MS = 1_500;
 export const CONTROL_WARNING_FEEDBACK_MS = 4_000;
 export const FULL_ACCESS_CONFIRMATION_MS = 4_000;
 const APP_SERVER_SETTINGS_TIMEOUT_MS = 15_000;
+const OWNER_PERSISTENCE_TIMEOUT_MS = 2_000;
+const OWNER_PERSISTENCE_RETRY_DELAYS_MS = [50, 100, 200, 400] as const;
 const CONVERSATION_ID_PATTERN = /^[0-9a-f-]{16,64}$/i;
 
 type PersistGlobalSettings = (settings: GlobalSettings) => Promise<void>;
@@ -84,7 +86,7 @@ export type CoordinatorDependencies = {
   resolveCodexCliPath?: () => Promise<string>;
   follower?: Pick<CodexDesktopFollower,
     "start" | "stop" | "onChange" | "setDesiredConversations" | "isConnected"
-    | "desktopFollowedIds" | "pendingApprovals" | "decideApproval" | "updateThreadSettings">;
+    | "desktopFollowedIds" | "pendingApprovals" | "decideApproval" | "updateThreadSettingsVerified">;
 };
 
 type ControlFeedbackKind = "default" | "partial" | "warning" | "confirm";
@@ -776,25 +778,6 @@ export class CodexDeckCoordinator {
       return "default";
     }
     const patch = threadSettingsForSnapshot(this.#controlSnapshot, this.#accessMode);
-    const followed = new Set(
-      this.#follower.desktopFollowedIds.filter((id) => CONVERSATION_ID_PATTERN.test(id))
-    );
-    // Begin the optional Desktop refresh before booting the isolated App
-    // Server. The batch still waits for every refresh to settle below, so a
-    // slow older IPC request cannot overtake the next queued dial snapshot.
-    // It is deliberately best effort: only the App Server readback counts as
-    // a durable next-turn setting.
-    const desktopHotRefreshes = targets.map((conversationId) => {
-      if (!followed.has(conversationId)) return Promise.resolve();
-      try {
-        return Promise.resolve(this.#follower.updateThreadSettings(conversationId, patch))
-          .catch(() => undefined);
-      } catch {
-        // Defensive for external follower implementations that violate the
-        // async contract by throwing before returning a Promise.
-        return Promise.resolve();
-      }
-    });
     let appServerUsed = false;
     const updateViaAppServer = async (conversationId: string): Promise<void> => {
       await this.#appServer.request(
@@ -832,6 +815,50 @@ export class CodexDeckCoordinator {
         throw new Error(`Codex task settings verification failed (${mismatches.join(", ")})`);
       }
     };
+    const verifyOwnedPersistence = async (conversationId: string): Promise<void> => {
+      // Metadata reads do not acquire another writer. The owner has already
+      // verified the complete settings snapshot; this independent persisted
+      // model/effort projection prevents an in-memory acknowledgement alone
+      // from being counted as a durable dial change.
+      const expected = {
+        ...(patch.model !== undefined ? { model: patch.model } : {}),
+        ...(patch.effort !== undefined ? { effort: patch.effort } : {})
+      };
+      const deadline = Date.now() + OWNER_PERSISTENCE_TIMEOUT_MS;
+      let mismatches: Array<keyof typeof expected> = [];
+      for (let attempt = 0; ; attempt += 1) {
+        const remainingMs = deadline - Date.now();
+        if (remainingMs <= 0) break;
+        const result = await this.#appServer.request(
+          "thread/read",
+          { threadId: conversationId, includeTurns: false },
+          remainingMs
+        );
+        const response = result && typeof result === "object"
+          ? result as { thread?: unknown } : undefined;
+        const thread = response?.thread && typeof response.thread === "object"
+          ? response.thread as { id?: unknown; model?: unknown; reasoningEffort?: unknown }
+          : undefined;
+        if (thread?.id !== conversationId) {
+          throw new Error("Codex task settings persistence verification failed (threadId)");
+        }
+        if ((thread.model != null && typeof thread.model !== "string")
+          || (thread.reasoningEffort != null && typeof thread.reasoningEffort !== "string")) {
+          throw new Error("Codex task settings persistence verification failed (malformed metadata)");
+        }
+        const actual = { model: thread.model, reasoningEffort: thread.reasoningEffort };
+        if (threadSettingsMatchResume(actual, expected)) return;
+        mismatches = (Object.keys(expected) as Array<keyof typeof expected>)
+          .filter((key) => !threadSettingsMatchResume(actual, { [key]: expected[key] }));
+        const delayMs = OWNER_PERSISTENCE_RETRY_DELAYS_MS[attempt];
+        if (delayMs === undefined || Date.now() + delayMs >= deadline) break;
+        // The owner RPC may acknowledge its queued update just before the
+        // metadata projection commits. Retry only this read: never submit a
+        // second write or acquire its writer to resolve an uncertain result.
+        await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+      }
+      throw new Error(`Codex task settings persistence verification failed (${mismatches.join(", ")})`);
+    };
     // Keep one deterministic batch inside #controlApplyQueue. A later dial
     // cannot overtake this snapshot while any Agent task is still updating.
     // Within the batch the App Server is shared, while each exact thread keeps
@@ -839,15 +866,29 @@ export class CodexDeckCoordinator {
     // cross-task latency without allowing settings from a later batch to win
     // out of order.
     try {
-      appServerUsed = true;
-      const appServerStart = (async () => {
-        const cliPath = await this.#resolveCodexCliPath();
-        await this.#appServer.start(cliPath, { experimentalApi: true });
-      })();
+      let appServerStart: Promise<void> | undefined;
+      const ensureAppServer = (): Promise<void> => {
+        if (!appServerStart) {
+          appServerUsed = true;
+          appServerStart = (async () => {
+            const cliPath = await this.#resolveCodexCliPath();
+            await this.#appServer.start(cliPath, { experimentalApi: true });
+          })();
+        }
+        return appServerStart;
+      };
       const results = await Promise.all(targets.map(async (conversationId) => {
         try {
-          await appServerStart;
-          await updateViaAppServer(conversationId);
+          // Ask the exact existing writer first, even when its window is not
+          // currently followed. Only a definite no-owner result permits a new
+          // isolated writer; uncertain owner submissions must remain failures.
+          const ownerVerified = await this.#follower.updateThreadSettingsVerified(conversationId, patch);
+          if (ownerVerified !== true && ownerVerified !== false) {
+            throw new Error("Codex Desktop returned an invalid owner verification result");
+          }
+          await ensureAppServer();
+          if (ownerVerified) await verifyOwnedPersistence(conversationId);
+          else await updateViaAppServer(conversationId);
           return { succeeded: true as const };
         } catch (error) {
           return {
@@ -874,7 +915,6 @@ export class CodexDeckCoordinator {
       const reason = failures[0] ? `: ${failures[0]}` : "";
       throw new Error(`Default saved, but live sync failed for all ${targets.length} tracked tasks${reason}`);
     } finally {
-      await Promise.allSettled(desktopHotRefreshes);
       if (appServerUsed) await this.#appServer.stop().catch(() => undefined);
     }
   }
