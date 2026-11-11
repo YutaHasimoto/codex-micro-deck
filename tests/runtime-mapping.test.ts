@@ -18,6 +18,7 @@ import type {
   StableCommand
 } from "../src/codex/stable-controller.ts";
 import { triggerDescriptionForRole } from "../src/core/encoder-triggers.ts";
+import { safeActionError } from "../src/core/errors.ts";
 import { renderEncoderFeedback } from "../src/render/encoder-feedback.ts";
 import { renderKeyImage } from "../src/render/key-image.ts";
 import type { GlobalSettings, ThreadSnapshot } from "../src/types.ts";
@@ -677,7 +678,7 @@ test("persisted Custom Access survives Model changes and uses no named profile",
   });
 });
 
-test("a partial task sync reports the successful count and raises a physical alert", async () => {
+test("a partial task sync reports its failure reason safely without changing the successful count", async () => {
   const calls: string[] = [];
   const threads = [
     snapshot("1", "One", "idle"),
@@ -691,9 +692,14 @@ test("a partial task sync reports the successful count and raises a physical ale
     follower.liveUpdates.push({ conversationId, threadSettings: structuredClone(patch) });
   };
   const appServer = fakeAppServer({
-    failRequest: (_method, params) => (
-      (params as { threadId?: string }).threadId === threads[1]!.id
-    )
+    failRequest: (_method, params) => {
+      if ((params as { threadId?: string }).threadId === threads[1]!.id) {
+        throw new Error(
+          "resume rejected for 11111111-2222-3333-4444-555555555555 at /Users/example/.codex/history.json\nretry\tlater"
+        );
+      }
+      return false;
+    }
   });
   const coordinator = new CodexDeckCoordinator({
     provider: { async listRecentThreads() { return threads; } },
@@ -708,7 +714,16 @@ test("a partial task sync reports the successful count and raises a physical ale
   await coordinator.rotateEncoder({}, reasoning, 1);
   await assert.rejects(
     () => coordinator.pressEncoder({}, reasoning),
-    /synced 2\/3.*Partial sync/i
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /synced 2\/3.*Partial sync/i);
+      assert.match(error.message, /resume rejected/);
+      const logged = safeActionError(error);
+      assert.match(logged, /resume rejected for <thread-id> at <user-path> retry later/);
+      assert.doesNotMatch(logged, /11111111|\/Users\/|[\r\n\t]/);
+      assert.ok(logged.length <= 180);
+      return true;
+    }
   );
   assert.deepEqual(calls, ["apply:reasoning:medium"]);
   const presentation = coordinator.encoderPresentation({}, reasoning);
@@ -753,7 +768,7 @@ test("a read-back reviewer mismatch retries once and never shows a false sync", 
   follower.stub.isConnected = true;
   const appServer = fakeAppServer({
     resumeResult(result) {
-      return { ...result, approvalsReviewer: "user" };
+      return { ...result, approvalsReviewer: "user", serviceTier: "default" };
     }
   });
   const coordinator = new CodexDeckCoordinator({
@@ -769,7 +784,12 @@ test("a read-back reviewer mismatch retries once and never shows a false sync", 
   await coordinator.rotateEncoder({}, approval, 1);
   await assert.rejects(
     () => coordinator.pressEncoder({}, approval),
-    /verification failed/
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /verification failed \(approvalsReviewer\)/);
+      assert.doesNotMatch(error.message, /guardian_subagent|gpt-5\.6|on-request/);
+      return true;
+    }
   );
 
   assert.deepEqual(

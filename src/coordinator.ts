@@ -11,7 +11,8 @@ import {
 import {
   CodexDesktopIpcClient,
   threadSettingsMatchResume,
-  threadSettingsForSnapshot
+  threadSettingsForSnapshot,
+  type CodexThreadSettingsPatch
 } from "./codex/desktop-ipc-client.js";
 import {
   CodexDesktopFollower,
@@ -826,7 +827,9 @@ export class CodexDeckCoordinator {
         );
       }
       if (!threadSettingsMatchResume(verified, patch)) {
-        throw new Error("Codex task settings verification failed");
+        const mismatches = (Object.keys(patch) as Array<keyof CodexThreadSettingsPatch>)
+          .filter((key) => !threadSettingsMatchResume(verified, { [key]: patch[key] }));
+        throw new Error(`Codex task settings verification failed (${mismatches.join(", ")})`);
       }
     };
     // Keep one deterministic batch inside #controlApplyQueue. A later dial
@@ -862,8 +865,9 @@ export class CodexDeckCoordinator {
       }
       if (synced > 0) {
         this.#showControlFeedback(role, "partial", { synced, total: targets.length });
+        const reason = failures[0] ? `: ${failures[0]}` : "";
         throw new Error(
-          `Default saved; synced ${synced}/${targets.length} tracked tasks. Partial sync; retry`
+          `Default saved; synced ${synced}/${targets.length} tracked tasks. Partial sync; retry${reason}`
         );
       }
       this.#showControlFeedback(role, "warning", { synced: 0, total: targets.length });
