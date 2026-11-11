@@ -28,7 +28,9 @@ type AppServerThread = {
 
 export type AppServerLifecycle = "stopped" | "starting" | "running" | "stopping" | "failed";
 export const DEFAULT_CODEX_CLI_CANDIDATES = [
+  "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex",
   "/Applications/ChatGPT.app/Contents/Resources/codex",
+  "/Applications/Codex.app/Contents/Resources/codex-cli/bin/codex",
   "/Applications/Codex.app/Contents/Resources/codex"
 ] as const;
 // The local provider already selects the six user-owned tasks. Ask App Server

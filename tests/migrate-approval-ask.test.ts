@@ -3,12 +3,16 @@ import test from "node:test";
 
 import {
   APPROVAL_ASK_PATCH,
+  DEFAULT_CODEX_CLI_CANDIDATES,
   assertApprovalOnlyPatch,
   exactRecentThreadIds,
   parseMigrationArgs,
   resolveCodexCliPath,
   runApprovalAskMigration
 } from "../scripts/migrate-approval-ask.mjs";
+import {
+  DEFAULT_CODEX_CLI_CANDIDATES as RUNTIME_CODEX_CLI_CANDIDATES
+} from "../src/codex/app-server-client.ts";
 
 const IDS = Array.from({ length: 6 }, (_, index) => `${index + 1}`.repeat(16));
 const TEST_CLI_PATH = "/Applications/ChatGPT.app/Contents/Resources/codex";
@@ -66,6 +70,35 @@ test("Codex CLI resolver selects the first executable absolute candidate", async
     ),
     /見つかりません/
   );
+});
+
+test("approval migration discovers current and legacy app bundles like the runtime", async () => {
+  assert.deepEqual(DEFAULT_CODEX_CLI_CANDIDATES, RUNTIME_CODEX_CLI_CANDIDATES);
+  for (const expected of [
+    "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex",
+    "/Applications/Codex.app/Contents/Resources/codex-cli/bin/codex",
+    "/Applications/ChatGPT.app/Contents/Resources/codex",
+    "/Applications/Codex.app/Contents/Resources/codex"
+  ]) {
+    assert.equal(
+      await resolveCodexCliPath(undefined, async (candidate) => candidate === expected),
+      expected
+    );
+  }
+});
+
+test("approval migration never substitutes a standalone CLI when app bundles are missing", async () => {
+  const standalone = "/opt/homebrew/bin/codex";
+  const checked: string[] = [];
+  await assert.rejects(
+    () => resolveCodexCliPath(undefined, async (candidate) => {
+      checked.push(candidate);
+      return candidate === standalone;
+    }),
+    /見つかりません/
+  );
+  assert.deepEqual(checked, [...DEFAULT_CODEX_CLI_CANDIDATES]);
+  assert.equal(checked.includes(standalone), false);
 });
 
 test("dry-run reads state but never writes config or starts IPC", async () => {

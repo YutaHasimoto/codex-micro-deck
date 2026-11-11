@@ -22,7 +22,9 @@ export const REQUIRED_TARGET_COUNT = 6;
 export const DEFAULT_CONNECTION_TIMEOUT_MS = 8_000;
 export const DEFAULT_APP_SERVER_REQUEST_TIMEOUT_MS = 15_000;
 export const DEFAULT_CODEX_CLI_CANDIDATES = Object.freeze([
+  "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex",
   "/Applications/ChatGPT.app/Contents/Resources/codex",
+  "/Applications/Codex.app/Contents/Resources/codex-cli/bin/codex",
   "/Applications/Codex.app/Contents/Resources/codex"
 ]);
 export const APPROVAL_ASK_PATCH = Object.freeze({
