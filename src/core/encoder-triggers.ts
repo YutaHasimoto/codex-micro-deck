@@ -15,25 +15,25 @@ export function triggerDescriptionForRole(
   const role = encoderRole(settings, coordinates);
   const descriptions: Record<string, EncoderTriggerDescription> = {
     model: {
-      rotate: "モデル候補を選び、停止80ミリ秒後に自動適用（音声入力中は無効）",
+      rotate: "モデル候補を選び、停止300ミリ秒後に自動適用（音声入力中は無効）",
       push: "音声入力を開始／もう一度押して文字起こし・送信",
       touch: "現在設定を再読み込み",
       longTouch: "既定モデルへ戻して適用"
     },
     reasoning: {
-      rotate: "推論レベルを選び、停止80ミリ秒後に自動適用（音声入力中は無効）",
+      rotate: "推論レベルを選び、停止300ミリ秒後に自動適用（音声入力中は無効）",
       push: "音声入力を開始／もう一度押して文字起こし・送信",
       touch: "現在設定を再読み込み",
       longTouch: "既定の推論レベルへ戻して適用"
     },
     speed: {
-      rotate: "速度を選び、停止80ミリ秒後に自動適用（音声入力中は無効）",
+      rotate: "速度を選び、停止300ミリ秒後に自動適用（音声入力中は無効）",
       push: "音声入力を開始／もう一度押して文字起こし・送信",
       touch: "現在設定を再読み込み",
       longTouch: "標準速度へ戻して適用"
     },
     approval: {
-      rotate: "アクセス候補を選び、停止80ミリ秒後に自動適用（音声入力中は無効）",
+      rotate: "アクセス候補を選び、停止300ミリ秒後に自動適用（音声入力中は無効）",
       push: "音声入力を開始／もう一度押して文字起こし・送信",
       touch: "現在設定を再読み込み・待機中の適用を中止",
       longTouch: "Askへ戻して適用・待機中の適用を中止"

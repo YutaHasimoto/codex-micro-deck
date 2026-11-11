@@ -1,5 +1,5 @@
-/** Every configuration dial commits 80ms after its last rotation. */
-export const TRAILING_APPLY_DELAY_MS = 80;
+/** Every configuration dial commits 300ms after its last rotation. */
+export const TRAILING_APPLY_DELAY_MS = 300;
 
 type TimerHandle = ReturnType<typeof setTimeout>;
 

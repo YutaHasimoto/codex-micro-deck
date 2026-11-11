@@ -12,7 +12,7 @@ export type TrailingAutoApplyRole = "model" | "reasoning" | "speed" | "approval"
 /**
  * The four focused dials share one dictation toggle on physical down. Their
  * matching up event only releases the duplicate-down guard; configuration
- * still commits from the 80ms trailing rotation path.
+ * still commits from the 300ms trailing rotation path.
  */
 export function dialPhysicalRoute(
   role: EncoderRole,

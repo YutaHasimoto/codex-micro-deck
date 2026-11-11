@@ -39,7 +39,7 @@
         "layout": "layouts/encoder.json",
         "StackColor": "#304FFE",
         "TriggerDescription": {
-          "Rotate": "Choose a value (syncs after 80 ms; disabled during dictation)",
+          "Rotate": "Choose a value (syncs after 300 ms; disabled during dictation)",
           "Push": "Start dictation / press again to transcribe and send",
           "Touch": "Reload settings (hold to reset to the default)"
         }

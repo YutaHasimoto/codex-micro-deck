@@ -56,6 +56,7 @@ export const CONTROL_WARNING_FEEDBACK_MS = 4_000;
 export const FULL_ACCESS_CONFIRMATION_MS = 4_000;
 const APP_SERVER_SETTINGS_TIMEOUT_MS = 15_000;
 const OWNER_PERSISTENCE_TIMEOUT_MS = 2_000;
+const OWNER_SETTINGS_CONCURRENCY = 3;
 const OWNER_PERSISTENCE_RETRY_DELAYS_MS = [50, 100, 200, 400] as const;
 const CONVERSATION_ID_PATTERN = /^[0-9a-f-]{16,64}$/i;
 
@@ -877,7 +878,7 @@ export class CodexDeckCoordinator {
         }
         return appServerStart;
       };
-      const results = await Promise.all(targets.map(async (conversationId) => {
+      const updateTarget = async (conversationId: string) => {
         try {
           // Ask the exact existing writer first, even when its window is not
           // currently followed. Only a definite no-owner result permits a new
@@ -896,7 +897,11 @@ export class CodexDeckCoordinator {
             failure: error instanceof Error ? error.message : "task settings update failed"
           };
         }
-      }));
+      };
+      // A burst of eight owner RPC streams can exceed Desktop's short IPC
+      // deadline even though each individual task is healthy. Bound the
+      // simultaneous streams while preserving one ordered batch per dial.
+      const results = await mapConcurrent(targets, OWNER_SETTINGS_CONCURRENCY, updateTarget);
       const synced = results.filter((result) => result.succeeded).length;
       const failures = results.flatMap((result) => result.succeeded ? [] : [result.failure]);
       if (synced === targets.length) {
@@ -1488,7 +1493,7 @@ function isConfigControlRole(role: EncoderRole): role is ConfigControlRole {
 }
 
 function pendingApplyHint(role: ConfigControlRole): string {
-  if (role === "approval") return "auto in 80ms · next turn";
+  if (role === "approval") return "auto in 300ms · next turn";
   return "auto apply · next turn";
 }
 
@@ -1503,4 +1508,20 @@ function toAccessMode(value: string): AccessMode {
 
 async function repeat(count: number, operation: () => Promise<void>): Promise<void> {
   for (let index = 0; index < count; index += 1) await operation();
+}
+
+async function mapConcurrent<Item, Result>(
+  items: readonly Item[],
+  limit: number,
+  operation: (item: Item) => Promise<Result>
+): Promise<Result[]> {
+  const results = new Array<Result>(items.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await operation(items[index]!);
+    }
+  }));
+  return results;
 }

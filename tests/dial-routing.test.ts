@@ -28,12 +28,12 @@ test("legacy command dials also execute once on physical down", () => {
   }
 });
 
-test("all four focused configuration dials share an 80ms trailing auto-apply", () => {
+test("all four focused configuration dials share an 300ms trailing auto-apply", () => {
   for (const role of ["model", "reasoning", "speed", "approval"] as const) {
     assert.equal(dialUsesTrailingAutoApply(role), true);
   }
   for (const role of ["legacy-reasoning", "navigation", "skills", "composer", "review", "voice"] as const) {
     assert.equal(dialUsesTrailingAutoApply(role), false);
   }
-  assert.equal(TRAILING_APPLY_DELAY_MS, 80);
+  assert.equal(TRAILING_APPLY_DELAY_MS, 300);
 });

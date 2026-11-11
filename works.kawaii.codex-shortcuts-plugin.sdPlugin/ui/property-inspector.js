@@ -36,20 +36,20 @@
   ];
 
   const ENCODER_ROLES = [
-    role("model", "Model", "Saves the new-task default and syncs the same four settings to Agent tasks tracked on the Deck. Each task uses the change from its next turn; a turn already in progress does not change. Model automatically applies 80 ms after rotation stops. Codex normally does not need to restart.", [
-      ["Rotate", "Choose a model (auto-applies after 80 ms)"], ["Press", "Start dictation / press again to transcribe and send"],
+    role("model", "Model", "Saves the new-task default and syncs the same four settings to Agent tasks tracked on the Deck. Each task uses the change from its next turn; a turn already in progress does not change. Model automatically applies 300 ms after rotation stops. Codex normally does not need to restart.", [
+      ["Rotate", "Choose a model (auto-applies after 300 ms)"], ["Press", "Start dictation / press again to transcribe and send"],
       ["Tap", "Reload current settings"], ["Hold", "Reset to the cached default and apply"]
     ]),
-    role("reasoning", "Reasoning", "Saves the new-task default and syncs the same four settings to Agent tasks tracked on the Deck. Each task uses the change from its next turn; a turn already in progress does not change. Reasoning automatically applies 80 ms after rotation stops. Codex normally does not need to restart.", [
-      ["Rotate", "Choose a reasoning level (auto-applies after 80 ms)"], ["Press", "Start dictation / press again to transcribe and send"],
+    role("reasoning", "Reasoning", "Saves the new-task default and syncs the same four settings to Agent tasks tracked on the Deck. Each task uses the change from its next turn; a turn already in progress does not change. Reasoning automatically applies 300 ms after rotation stops. Codex normally does not need to restart.", [
+      ["Rotate", "Choose a reasoning level (auto-applies after 300 ms)"], ["Press", "Start dictation / press again to transcribe and send"],
       ["Tap", "Reload current settings"], ["Hold", "Reset to the model default and apply"]
     ]),
-    role("speed", "Speed", "Saves the new-task default and syncs the same four settings to Agent tasks tracked on the Deck. Each task uses the change from its next turn; a turn already in progress does not change. Speed offers Standard and Fast, and automatically applies 80 ms after rotation stops. Codex normally does not need to restart.", [
-      ["Rotate", "Choose a speed (auto-applies after 80 ms)"], ["Press", "Start dictation / press again to transcribe and send"],
+    role("speed", "Speed", "Saves the new-task default and syncs the same four settings to Agent tasks tracked on the Deck. Each task uses the change from its next turn; a turn already in progress does not change. Speed offers Standard and Fast, and automatically applies 300 ms after rotation stops. Codex normally does not need to restart.", [
+      ["Rotate", "Choose a speed (auto-applies after 300 ms)"], ["Press", "Start dictation / press again to transcribe and send"],
       ["Tap", "Reload current settings"], ["Hold", "Reset to the default (Standard) and apply"]
     ]),
-    role("approval", "Access", "Syncs Ask, Delegate, Full, or Custom to the new-task default and Agent tasks tracked on the Deck. Ask allows workspace writes with user approval. Delegate allows workspace writes with delegated approval. Full grants full access without confirmation. Access automatically applies 80 ms after rotation stops, including Full. Only Custom leaves config.toml unchanged and sends the current approval, reviewer, and sandbox settings to the tasks. Each task uses the change from its next turn; a turn already in progress does not change.", [
-      ["Rotate", "Choose an Access mode (auto-applies to the next turn after 80 ms)"], ["Press", "Start dictation / press again to transcribe and send"],
+    role("approval", "Access", "Syncs Ask, Delegate, Full, or Custom to the new-task default and Agent tasks tracked on the Deck. Ask allows workspace writes with user approval. Delegate allows workspace writes with delegated approval. Full grants full access without confirmation. Access automatically applies 300 ms after rotation stops, including Full. Only Custom leaves config.toml unchanged and sends the current approval, reviewer, and sandbox settings to the tasks. Each task uses the change from its next turn; a turn already in progress does not change.", [
+      ["Rotate", "Choose an Access mode (auto-applies to the next turn after 300 ms)"], ["Press", "Start dictation / press again to transcribe and send"],
       ["Tap", "Reload current settings and cancel pending auto-apply"], ["Hold", "Reset to Ask, apply, and cancel pending auto-apply"]
     ])
   ];

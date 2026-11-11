@@ -312,7 +312,7 @@ test("property inspector separates trailing config apply from the shared voice t
   ]) {
     assert.match(encoderRoles, new RegExp(copy));
   }
-  assert.equal((encoderRoles.match(/automatically applies 80 ms after rotation stops/g) ?? []).length, 4);
+  assert.equal((encoderRoles.match(/automatically applies 300 ms after rotation stops/g) ?? []).length, 4);
   assert.equal(
     (encoderRoles.match(/Start dictation \/ press again to transcribe and send/g) ?? []).length,
     4

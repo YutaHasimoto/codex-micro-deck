@@ -639,7 +639,7 @@ test("Full Access applies once from the settled rotation source without a physic
   const access = { column: 3, row: 0 };
 
   await coordinator.rotateEncoder({}, access, -1); // Custom -> Full
-  assert.equal(coordinator.encoderPresentation({}, access).hint, "auto in 80ms · next turn");
+  assert.equal(coordinator.encoderPresentation({}, access).hint, "auto in 300ms · next turn");
   assert.equal(await coordinator.pressEncoder({}, access, "auto"), "applied");
   assert.deepEqual(configCalls, ["apply:approval:full"]);
   assert.equal(follower.ownerAttempts.length, 1);
@@ -1811,15 +1811,24 @@ test("mixed owned and unowned Agent slots verify every target without acquiring 
   const persisted = new Map<string, CodexThreadSettingsPatch>();
   const checks: string[] = [];
   const ownerWrites: string[] = [];
+  let activeOwnerRequests = 0;
+  let peakOwnerRequests = 0;
   const follower = fakeFollower();
   follower.stub.isConnected = true;
   follower.followOnly([]);
   follower.stub.updateThreadSettingsVerified = async (id, patch) => {
     checks.push(id);
-    if (!owned.has(id)) return false;
-    ownerWrites.push(id);
-    persisted.set(id, structuredClone(patch));
-    return true;
+    activeOwnerRequests += 1;
+    peakOwnerRequests = Math.max(peakOwnerRequests, activeOwnerRequests);
+    try {
+      await new Promise<void>((resolve) => setTimeout(resolve, 5));
+      if (!owned.has(id)) return false;
+      ownerWrites.push(id);
+      persisted.set(id, structuredClone(patch));
+      return true;
+    } finally {
+      activeOwnerRequests -= 1;
+    }
   };
   const appServer = fakeAppServer({
     ownerPersistedSettings: persisted,
@@ -1841,6 +1850,7 @@ test("mixed owned and unowned Agent slots verify every target without acquiring 
   await coordinator.rotateEncoder({}, { column: 0, row: 0 }, 1);
   assert.equal(await coordinator.pressEncoder({}, { column: 0, row: 0 }), "applied");
   assert.deepEqual(checks, targets, "hidden owners must be checked too");
+  assert.equal(peakOwnerRequests, 3, "owner requests must be parallel but bounded");
   assert.deepEqual(ownerWrites, [...owned]);
   assert.equal(appServer.events.filter((event) => event.startsWith("start:")).length, 1);
   assert.equal(appServer.events.filter((event) => event === "stop").length, 1);
@@ -2232,13 +2242,13 @@ test("invalid poll settings are normalized instead of creating a hot timer", () 
 
 test("dial trigger descriptions explain each physical gesture in Japanese", () => {
   assert.deepEqual(triggerDescriptionForRole({}, { column: 3, row: 0 }), {
-    rotate: "アクセス候補を選び、停止80ミリ秒後に自動適用（音声入力中は無効）",
+    rotate: "アクセス候補を選び、停止300ミリ秒後に自動適用（音声入力中は無効）",
     push: "音声入力を開始／もう一度押して文字起こし・送信",
     touch: "現在設定を再読み込み・待機中の適用を中止",
     longTouch: "Askへ戻して適用・待機中の適用を中止"
   });
   assert.deepEqual(triggerDescriptionForRole({}, { column: 1, row: 0 }), {
-    rotate: "推論レベルを選び、停止80ミリ秒後に自動適用（音声入力中は無効）",
+    rotate: "推論レベルを選び、停止300ミリ秒後に自動適用（音声入力中は無効）",
     push: "音声入力を開始／もう一度押して文字起こし・送信",
     touch: "現在設定を再読み込み",
     longTouch: "既定の推論レベルへ戻して適用"

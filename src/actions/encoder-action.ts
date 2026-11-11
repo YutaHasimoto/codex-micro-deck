@@ -20,6 +20,7 @@ import {
 } from "../core/dial-routing.js";
 import { safeActionError } from "../core/errors.js";
 import { defaultEncoderRole } from "../core/model.js";
+import { OrderedRotations } from "../core/ordered-rotations.js";
 import { TrailingApplyScheduler } from "../core/trailing-apply.js";
 import {
   renderEncoderFeedback,
@@ -36,6 +37,9 @@ import {
 @action({ UUID: ENCODER_ACTION_UUID })
 export class CodexEncoderAction extends SingletonAction<EncoderSettings> {
   readonly #autoApply = new TrailingApplyScheduler<TrailingAutoApplyRole>();
+  readonly #rotations = new OrderedRotations();
+  readonly #rotationSettings = new Map<string, EncoderSettings>();
+  readonly #disappearedDials = new Set<string>();
   #refreshQueued = false;
   #refreshPromise: Promise<void> | undefined;
   #voiceFrame = 0;
@@ -70,9 +74,11 @@ export class CodexEncoderAction extends SingletonAction<EncoderSettings> {
 
   override async onWillAppear(event: WillAppearEvent<EncoderSettings>): Promise<void> {
     if (!event.action.isDial()) return;
+    this.#disappearedDials.delete(event.action.id);
     this.#autoApply.cancel(event.action.id);
     const coordinates = event.action.coordinates;
     const settings = migrateEncoderSettings(event.payload.settings, coordinates.column);
+    this.#rotationSettings.set(event.action.id, settings);
     if (settings !== event.payload.settings) {
       await event.action.setSettings(settings);
     }
@@ -81,43 +87,59 @@ export class CodexEncoderAction extends SingletonAction<EncoderSettings> {
 
   override async onDidReceiveSettings(event: DidReceiveSettingsEvent<EncoderSettings>): Promise<void> {
     if (!event.action.isDial()) return;
+    this.#rotationSettings.set(event.action.id, event.payload.settings);
     await this.#autoApply.cancelAndWait(event.action.id);
     await this.render(event.action, event.payload.settings, event.action.coordinates);
   }
 
   override async onDialRotate(event: DialRotateEvent<EncoderSettings>): Promise<void> {
-    try {
-      if (this.#voiceTransitions > 0 || this.coordinator.voiceActive) {
-        this.#autoApply.cancel(event.action.id);
-        await this.render(event.action, event.payload.settings, event.action.coordinates);
-        return;
+    const id = event.action.id;
+    // Admit each detent before the first await. A running owner write can take
+    // seconds, while the SDK can deliver more rotations in that interval.
+    this.#autoApply.cancel(id);
+    await this.#rotations.enqueue(id, async (isLast) => {
+      let settings = this.#rotationSettings.get(id) ?? event.payload.settings;
+      let succeeded = false;
+      try {
+        if (this.#voiceTransitions > 0 || this.coordinator.voiceActive) return;
+        await this.#autoApply.cancelAndWait(id);
+        if (this.#voiceTransitions > 0 || this.coordinator.voiceActive) return;
+        const inputSettings = settings;
+        settings = await this.coordinator.rotateEncoder(
+          settings,
+          event.action.coordinates,
+          event.payload.ticks
+        );
+        if (settings !== inputSettings) await event.action.setSettings(settings);
+        this.#rotationSettings.set(id, settings);
+        succeeded = true;
+      } catch (error) {
+        this.#logFailure("rotate", event.payload.settings, event.action.coordinates, error);
+        await event.action.showAlert().catch(() => undefined);
+      } finally {
+        // Only the last queued detent starts the quiet-period timer. This
+        // avoids sending every intermediate selection during a fast spin.
+        if (isLast()) {
+          const role = encoderRole(settings, event.action.coordinates);
+          if (!this.#disappearedDials.has(id) && succeeded && event.payload.ticks !== 0
+            && dialUsesTrailingAutoApply(role)
+            && !hasAutoApplyOverride(settings, event.payload.ticks, role)) {
+            streamDeck.logger.info(`[dial:${role}:rotate] auto apply scheduled`);
+            this.#scheduleTrailingApply(event.action, settings, event.action.coordinates, role);
+          }
+          if (!this.#disappearedDials.has(id)) {
+            await this.render(event.action, settings, event.action.coordinates).catch((error) => {
+              this.#logFailure("rotate-render", settings, event.action.coordinates, error);
+            });
+          }
+        }
       }
-      await this.#autoApply.cancelAndWait(event.action.id);
-      const settings = await this.coordinator.rotateEncoder(
-        event.payload.settings,
-        event.action.coordinates,
-        event.payload.ticks
-      );
-      if (settings !== event.payload.settings) await event.action.setSettings(settings);
-      const role = encoderRole(settings, event.action.coordinates);
-      if (event.payload.ticks !== 0
-        && dialUsesTrailingAutoApply(role)
-        && !hasAutoApplyOverride(settings, event.payload.ticks, role)) {
-        // Commit the Codex selection independently of the feedback repaint.
-        // A slow or transient Stream Deck display update must not turn a
-        // rotation into a press-only operation.
-        streamDeck.logger.info(`[dial:${role}:rotate] auto apply scheduled`);
-        this.#scheduleTrailingApply(event.action, settings, event.action.coordinates, role);
-      }
-      await this.render(event.action, settings, event.action.coordinates);
-    } catch (error) {
-      this.#logFailure("rotate", event.payload.settings, event.action.coordinates, error);
-      await event.action.showAlert().catch(() => undefined);
-    }
+    });
   }
 
   override async onDialDown(event: DialDownEvent<EncoderSettings>): Promise<void> {
     try {
+      await this.#waitForRotations(event.action.id);
       const role = encoderRole(event.payload.settings, event.action.coordinates);
       const route = dialPhysicalRoute(role, "down");
       if (route === "voice-toggle") {
@@ -189,6 +211,7 @@ export class CodexEncoderAction extends SingletonAction<EncoderSettings> {
 
   override async onTouchTap(event: TouchTapEvent<EncoderSettings>): Promise<void> {
     try {
+      await this.#waitForRotations(event.action.id);
       await this.#autoApply.cancelAndWait(event.action.id);
       await this.coordinator.touchEncoder(
         event.payload.settings,
@@ -203,6 +226,8 @@ export class CodexEncoderAction extends SingletonAction<EncoderSettings> {
   }
 
   override onWillDisappear(event: WillDisappearEvent<EncoderSettings>): void {
+    this.#disappearedDials.add(event.action.id);
+    this.#rotationSettings.delete(event.action.id);
     this.#autoApply.cancel(event.action.id);
     void this.coordinator.releaseDial(event.action.id).catch(() => undefined);
   }
@@ -215,6 +240,10 @@ export class CodexEncoderAction extends SingletonAction<EncoderSettings> {
       });
     }
     await this.#refreshPromise;
+  }
+
+  async #waitForRotations(id: string): Promise<void> {
+    await this.#rotations.drain(id);
   }
 
   async #drainRefreshes(): Promise<void> {
@@ -344,7 +373,7 @@ function hasAutoApplyOverride(
   role: EncoderSettings["role"]
 ): boolean {
   // Focused dial presses are reserved for dictation. A legacy pressShortcut
-  // must not disable their independent 80ms rotation apply.
+  // must not disable their independent 300ms rotation apply.
   if (settings.pressShortcut && !isConfigRole(role)) return true;
   if (ticks > 0) return Boolean(settings.clockwiseShortcut);
   if (ticks < 0) return Boolean(settings.counterClockwiseShortcut);

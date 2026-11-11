@@ -4,8 +4,20 @@ import test from "node:test";
 
 import { TRAILING_APPLY_DELAY_MS, TrailingApplyScheduler } from "../src/core/trailing-apply.ts";
 
-test("the default trailing apply delay is the shared 80ms setting", () => {
-  assert.equal(TRAILING_APPLY_DELAY_MS, 80);
+test("the default trailing apply delay is the shared 300ms setting", () => {
+  assert.equal(TRAILING_APPLY_DELAY_MS, 300);
+});
+
+test("a brief pause during rapid rotation does not commit an intermediate choice", async () => {
+  const scheduler = new TrailingApplyScheduler<"model">();
+  const applied: string[] = [];
+  scheduler.schedule("model", "model", async () => { applied.push("first"); return true; });
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  scheduler.schedule("model", "model", async () => { applied.push("last"); return true; });
+  await new Promise((resolve) => setTimeout(resolve, 220));
+  assert.deepEqual(applied, []);
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  assert.deepEqual(applied, ["last"]);
 });
 
 test("trailing apply runs only the last rotation", async () => {

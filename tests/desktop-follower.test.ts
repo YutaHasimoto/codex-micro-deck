@@ -445,7 +445,10 @@ test("Custom owner verification retains the raw sandbox and rejects a stale name
     try {
       follower.start();
       await until(() => follower.isConnected);
-      if (staleProfile) await assert.rejects(() => follower.updateThreadSettingsVerified(CONV, customPatch), /sandboxPolicy/);
+      if (staleProfile) await assert.rejects(
+        () => follower.updateThreadSettingsVerified(CONV, customPatch),
+        /sandboxPolicy: permission profile still active/
+      );
       else assert.equal(await follower.updateThreadSettingsVerified(CONV, customPatch), true);
     } finally { follower.stop(); }
   }

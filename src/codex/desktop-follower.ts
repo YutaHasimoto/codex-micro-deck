@@ -13,7 +13,9 @@ import {
 } from "./desktop-ipc-client.js";
 
 export const FOLLOWER_CLIENT_TYPE = "codex-micro-deck";
-export const DEFAULT_FOLLOWER_REQUEST_TIMEOUT_MS = 2_500;
+// Owner updates can queue behind other Codex Desktop work when several Agent
+// dials are being applied. Keep the wire and local deadlines aligned.
+export const DEFAULT_FOLLOWER_REQUEST_TIMEOUT_MS = 10_000;
 // Conversation snapshots include the full turn history; the active task on this
 // machine already produces ~5 MB snapshots, so the cap must sit far above the
 // 1 MB used by the tiny ephemeral request/response client.
@@ -568,7 +570,10 @@ export class CodexDesktopFollower {
               [key]: waiter.expected[key as keyof CodexThreadSettingsPatch]
             })
           ));
-          waiter.reject(new Error(`Codex Desktop settings verification failed (${mismatches.join(", ")})`));
+          const detail = mismatches.includes("sandboxPolicy")
+            ? sandboxVerificationHint(projection, waiter.expected)
+            : undefined;
+          waiter.reject(new Error(`Codex Desktop settings verification failed (${mismatches.join(", ")}${detail ? `: ${detail}` : ""})`));
         } else waiter.resolve();
       }
       if (!this.#desired.has(conversationId)) return;
@@ -756,6 +761,34 @@ function projectThreadSettings(state: JsonRecord | undefined): JsonRecord | unde
     result.sandbox = projected;
   }
   return result;
+}
+
+/** Only field names and presence are reported; policy values and roots stay private. */
+function sandboxVerificationHint(
+  projection: JsonRecord | undefined,
+  expected: CodexThreadSettingsPatch
+): string | undefined {
+  if (!expected.sandboxPolicy) return undefined;
+  if (!projection) return "snapshot unavailable";
+  if (projection.activePermissionProfile !== null) return "permission profile still active";
+  const actual = asRecord(projection.sandbox);
+  if (!actual) return "sandbox absent";
+  if (actual.type !== expected.sandboxPolicy.type) return "sandbox type";
+  if (expected.sandboxPolicy.type === "dangerFullAccess") {
+    return Object.keys(actual).length === 1 ? undefined : "sandbox fields";
+  }
+  if (actual.networkAccess !== expected.sandboxPolicy.networkAccess) return "network access";
+  if (expected.sandboxPolicy.type === "workspaceWrite") {
+    const expectedRoots = expected.sandboxPolicy.writableRoots;
+    if (actual.excludeTmpdirEnvVar !== expected.sandboxPolicy.excludeTmpdirEnvVar) return "temporary directory policy";
+    if (actual.excludeSlashTmp !== expected.sandboxPolicy.excludeSlashTmp) return "slash tmp policy";
+    const roots = actual.writableRoots;
+    if (!Array.isArray(roots) || roots.length !== expectedRoots.length
+      || roots.some((root, index) => root !== expectedRoots[index])) {
+      return "writable roots";
+    }
+  }
+  return "sandbox policy";
 }
 
 const APPROVAL_REQUEST_KINDS: Record<string, PendingApprovalKind> = {

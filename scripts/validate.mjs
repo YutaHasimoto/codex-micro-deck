@@ -328,9 +328,9 @@ function validatePropertyInspector(propertyInspectorPath) {
       `Property inspector must offer the ${role} encoder role.`);
   }
   for (const explanation of [
-    "automatically applies 80 ms after rotation stops",
+    "automatically applies 300 ms after rotation stops",
     "Start dictation / press again to transcribe and send",
-    "Choose an Access mode (auto-applies to the next turn after 80 ms)",
+    "Choose an Access mode (auto-applies to the next turn after 300 ms)",
     "Reload current settings", "Reset to",
     "next turn", "new-task default", "does not need to restart",
     "successful update keeps the selected value visible",
